@@ -249,14 +249,217 @@ void Board::make_capture(int old_x, int old_y, int new_x, int new_y){
     board_hash ^= move_left_hash[move_left];
 }
 
-int Board::board_eval(){
-    int val = 0;
-    for(auto& i: current_board){
-        for(auto& j: i){
-            val += piece_value[j];
+int Board::board_eval() {
+    // 1. Terminal State Check
+    if (game_status != 0) {
+        int winner_score = (game_status > 0) ? 999999 : -999999;
+        return winner_score * (turn ? -1 : 1);
+    }
+
+    int raw_score = 0;
+    int pawn_count_white[8] = {0};
+    int pawn_count_black[8] = {0};
+
+    int white_king_x = -1, white_king_y = -1;
+    int black_king_x = -1, black_king_y = -1;
+
+    // +++ ADDED: Data structures & bonus lookup for new heuristics +++
+    std::vector<std::pair<int, int>> white_rooks;
+    std::vector<std::pair<int, int>> black_rooks;
+    const int passed_pawn_bonus[8] = {0, 5, 15, 30, 60, 100, 160, 0};
+
+    // +++ ADDED: Board boundary check helper +++
+    auto is_on_board = [](int r, int c) {
+        return r >= 0 && r < 8 && c >= 0 && c < 8;
+    };
+
+    // 2. Main Board Traversal
+    for (int r = 0; r < 8; r++) {
+        for (int c = 0; c < 8; c++) {
+            int piece = current_board[r][c];
+            if (piece == 0) continue;
+
+            int abs_p = std::abs(piece);
+            bool is_white = (piece > 0);
+            int side = is_white ? 1 : -1;
+            int mat = piece_value[abs_p];
+            int pst = 0;
+
+            int sq_idx = is_white ? (r * 8 + c) : ((7 - r) * 8 + c);
+
+            switch (abs_p) {
+                case 1: // Pawn
+                    pst = pawn_sq_table[sq_idx];
+                    if (is_white) pawn_count_white[c]++;
+                    else pawn_count_black[c]++;
+
+                    // +++ ADDED: PASSED PAWN HEURISTIC +++
+                    {
+                        bool is_passed = true;
+                        int forward_dir = is_white ? 1 : -1;
+
+                        for (int check_r = r + forward_dir; check_r >= 0 && check_r < 8; check_r += forward_dir) {
+                            for (int check_c = c - 1; check_c <= c + 1; ++check_c) {
+                                if (is_on_board(check_r, check_c)) {
+                                    int enemy_pawn = is_white ? -1 : 1;
+                                    if (current_board[check_r][check_c] == enemy_pawn) {
+                                        is_passed = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!is_passed) break;
+                        }
+
+                        if (is_passed) {
+                            int rank_idx = is_white ? r : (7 - r);
+                            raw_score += side * passed_pawn_bonus[rank_idx];
+                        }
+                    }
+                    break;
+
+                case 2: // Knight
+                    pst = knight_sq_table[sq_idx];
+
+                    // +++ ADDED: KNIGHT MOBILITY +++
+                    {
+                        int mobility = 0;
+                        const int knight_moves[8][2] = {
+                            {-2,-1}, {-2,1}, {-1,-2}, {-1,2},
+                            { 1,-2}, { 1,2}, { 2,-1}, { 2,1}
+                        };
+                        for (auto& m : knight_moves) {
+                            int nr = r + m[0], nc = c + m[1];
+                            if (is_on_board(nr, nc)) {
+                                int dest = current_board[nr][nc];
+                                if (dest == 0 || (dest > 0 != is_white)) mobility++;
+                            }
+                        }
+                        raw_score += side * (mobility * 4);
+                    }
+                    break;
+
+                // +++ ADDED: BISHOP MOBILITY +++
+                case 3: // Bishop
+                    {
+                        int mobility = 0;
+                        const int bishop_dirs[4][2] = {{-1,-1}, {-1,1}, {1,-1}, {1,1}};
+                        for (auto& d : bishop_dirs) {
+                            int nr = r + d[0], nc = c + d[1];
+                            while (is_on_board(nr, nc)) {
+                                int dest = current_board[nr][nc];
+                                if (dest == 0) {
+                                    mobility++;
+                                } else {
+                                    if (dest > 0 != is_white) mobility++;
+                                    break;
+                                }
+                                nr += d[0]; nc += d[1];
+                            }
+                        }
+                        raw_score += side * (mobility * 3);
+                    }
+                    break;
+
+                // +++ ADDED: TRACK ROOK POSITIONS +++
+                case 4: // Rook
+                    if (is_white) white_rooks.push_back({r, c});
+                    else black_rooks.push_back({r, c});
+                    break;
+
+                case 6: // King
+                    pst = king_sq_table[sq_idx];
+                    if (is_white) { white_king_x = r; white_king_y = c; }
+                    else { black_king_x = r; black_king_y = c; }
+                    break;
+
+                default:
+                    break;
+            }
+
+            // FIXED BUG #1: Properly score material based on piece owner side
+            int positional_val = (mat * 100) + pst;
+            raw_score += side * positional_val;
         }
     }
-    return val * (turn ? -1 : 1);
+
+    // 3. Pawn Structure Penalties (Doubled / Isolated)
+    for (int c = 0; c < 8; ++c) {
+        if (pawn_count_white[c] > 1) raw_score -= (pawn_count_white[c] - 1) * 20;
+        if (pawn_count_black[c] > 1) raw_score += (pawn_count_black[c] - 1) * 20;
+
+        if (pawn_count_white[c] > 0) {
+            bool left = (c > 0) && (pawn_count_white[c - 1] > 0);
+            bool right = (c < 7) && (pawn_count_white[c + 1] > 0);
+            if (!left && !right) raw_score -= 15;
+        }
+        if (pawn_count_black[c] > 0) {
+            bool left = (c > 0) && (pawn_count_black[c - 1] > 0);
+            bool right = (c < 7) && (pawn_count_black[c + 1] > 0);
+            if (!left && !right) raw_score += 15;
+        }
+    }
+
+    // +++ ADDED: CONNECTED ROOKS EVALUATION +++
+    auto eval_rook_connection = [&](const std::vector<std::pair<int, int>>& rooks) {
+        if (rooks.size() < 2) return 0;
+        int connection_score = 0;
+
+        for (size_t i = 0; i < rooks.size(); ++i) {
+            for (size_t j = i + 1; j < rooks.size(); ++j) {
+                int r1 = rooks[i].first, c1 = rooks[i].second;
+                int r2 = rooks[j].first, c2 = rooks[j].second;
+
+                if (r1 == r2) { // Same Rank
+                    bool blocked = false;
+                    int start_c = std::min(c1, c2) + 1;
+                    int end_c = std::max(c1, c2);
+                    for (int col = start_c; col < end_c; ++col) {
+                        if (current_board[r1][col] != 0) { blocked = true; break; }
+                    }
+                    if (!blocked) connection_score += 25;
+                } 
+                else if (c1 == c2) { // Same File (Doubled)
+                    bool blocked = false;
+                    int start_r = std::min(r1, r2) + 1;
+                    int end_r = std::max(r1, r2);
+                    for (int row = start_r; row < end_r; ++row) {
+                        if (current_board[row][c1] != 0) { blocked = true; break; }
+                    }
+                    if (!blocked) connection_score += 25;
+                }
+            }
+        }
+        return connection_score;
+    };
+
+    raw_score += eval_rook_connection(white_rooks);
+    raw_score -= eval_rook_connection(black_rooks);
+
+    // 5. King Shield Evaluation
+    auto eval_shield = [&](int k_x, int k_y, int p_type) {
+        if (k_x == -1) return 0;
+        int shield_score = 0;
+        int forward_row = k_x + (p_type > 0 ? 1 : -1);
+
+        if (forward_row >= 0 && forward_row < 8) {
+            for (int dc = -1; dc <= 1; ++dc) {
+                int sc = k_y + dc;
+                if (sc >= 0 && sc < 8) {
+                    if (current_board[forward_row][sc] == p_type) {
+                        shield_score += 25;
+                    }
+                }
+            }
+        }
+        return shield_score;
+    };
+
+    raw_score += eval_shield(white_king_x, white_king_y, 1);
+    raw_score -= eval_shield(black_king_x, black_king_y, -1);
+
+    // 6. Return relative to active player's turn
+    return raw_score * (turn ? -1 : 1);
 }
 
 void Board::rollback_move(){
