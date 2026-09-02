@@ -250,7 +250,7 @@ void Board::make_capture(int old_x, int old_y, int new_x, int new_y){
 }
 
 int Board::board_eval() {
-    // 1. Terminal State Check
+
     if (game_status != 0) {
         int winner_score = (game_status > 0) ? 999999 : -999999;
         return winner_score * (turn ? -1 : 1);
@@ -263,17 +263,16 @@ int Board::board_eval() {
     int white_king_x = -1, white_king_y = -1;
     int black_king_x = -1, black_king_y = -1;
 
-    // +++ ADDED: Data structures & bonus lookup for new heuristics +++
+   
     std::vector<std::pair<int, int>> white_rooks;
     std::vector<std::pair<int, int>> black_rooks;
     const int passed_pawn_bonus[8] = {0, 5, 15, 30, 60, 100, 160, 0};
 
-    // +++ ADDED: Board boundary check helper +++
     auto is_on_board = [](int r, int c) {
         return r >= 0 && r < 8 && c >= 0 && c < 8;
     };
 
-    // 2. Main Board Traversal
+
     for (int r = 0; r < 8; r++) {
         for (int c = 0; c < 8; c++) {
             int piece = current_board[r][c];
@@ -288,12 +287,12 @@ int Board::board_eval() {
             int sq_idx = is_white ? (r * 8 + c) : ((7 - r) * 8 + c);
 
             switch (abs_p) {
-                case 1: // Pawn
+                case 1: 
                     pst = pawn_sq_table[sq_idx];
                     if (is_white) pawn_count_white[c]++;
                     else pawn_count_black[c]++;
 
-                    // +++ ADDED: PASSED PAWN HEURISTIC +++
+                
                     {
                         bool is_passed = true;
                         int forward_dir = is_white ? 1 : -1;
@@ -318,10 +317,10 @@ int Board::board_eval() {
                     }
                     break;
 
-                case 2: // Knight
+                case 2: 
                     pst = knight_sq_table[sq_idx];
 
-                    // +++ ADDED: KNIGHT MOBILITY +++
+                   
                     {
                         int mobility = 0;
                         const int knight_moves[8][2] = {
@@ -339,8 +338,8 @@ int Board::board_eval() {
                     }
                     break;
 
-                // +++ ADDED: BISHOP MOBILITY +++
-                case 3: // Bishop
+              
+                case 3: 
                     {
                         int mobility = 0;
                         const int bishop_dirs[4][2] = {{-1,-1}, {-1,1}, {1,-1}, {1,1}};
@@ -361,13 +360,13 @@ int Board::board_eval() {
                     }
                     break;
 
-                // +++ ADDED: TRACK ROOK POSITIONS +++
-                case 4: // Rook
+              
+                case 4: 
                     if (is_white) white_rooks.push_back({r, c});
                     else black_rooks.push_back({r, c});
                     break;
 
-                case 6: // King
+                case 6: 
                     pst = king_sq_table[sq_idx];
                     if (is_white) { white_king_x = r; white_king_y = c; }
                     else { black_king_x = r; black_king_y = c; }
@@ -377,13 +376,13 @@ int Board::board_eval() {
                     break;
             }
 
-            // FIXED BUG #1: Properly score material based on piece owner side
-            int positional_val = (mat * 100) + pst;
-            raw_score += side * positional_val;
+            
+         int total_piece_val = mat * 100 + (piece > 0 ? pst : -pst);
+         raw_score += total_piece_val;
         }
     }
 
-    // 3. Pawn Structure Penalties (Doubled / Isolated)
+    
     for (int c = 0; c < 8; ++c) {
         if (pawn_count_white[c] > 1) raw_score -= (pawn_count_white[c] - 1) * 20;
         if (pawn_count_black[c] > 1) raw_score += (pawn_count_black[c] - 1) * 20;
@@ -400,7 +399,7 @@ int Board::board_eval() {
         }
     }
 
-    // +++ ADDED: CONNECTED ROOKS EVALUATION +++
+
     auto eval_rook_connection = [&](const std::vector<std::pair<int, int>>& rooks) {
         if (rooks.size() < 2) return 0;
         int connection_score = 0;
@@ -436,7 +435,7 @@ int Board::board_eval() {
     raw_score += eval_rook_connection(white_rooks);
     raw_score -= eval_rook_connection(black_rooks);
 
-    // 5. King Shield Evaluation
+    
     auto eval_shield = [&](int k_x, int k_y, int p_type) {
         if (k_x == -1) return 0;
         int shield_score = 0;
@@ -458,7 +457,7 @@ int Board::board_eval() {
     raw_score += eval_shield(white_king_x, white_king_y, 1);
     raw_score -= eval_shield(black_king_x, black_king_y, -1);
 
-    // 6. Return relative to active player's turn
+    
     return raw_score * (turn ? -1 : 1);
 }
 
