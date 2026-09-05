@@ -49,24 +49,24 @@ Board::Board(){
     move_pattern[2].push_back({2, 1}); move_pattern[2].push_back({2, -1}); move_pattern[2].push_back({-2, 1}); move_pattern[2].push_back({-2, -1});
     move_pattern[2].push_back({1, 2}); move_pattern[2].push_back({1, -2}); move_pattern[2].push_back({-1, 2}); move_pattern[2].push_back({-1, -2}); 
 
-    move_pattern[3].push_back({1, 1}); move_pattern[3].push_back({2, 2}); move_pattern[3].push_back({3, 3}); move_pattern[3].push_back({4, 4}); move_pattern[3].push_back({5, 5}); move_pattern[3].push_back({6, 6}); move_pattern[3].push_back({7, 7});
-    move_pattern[3].push_back({-1, -1}); move_pattern[3].push_back({-2, -2}); move_pattern[3].push_back({-3, -3}); move_pattern[3].push_back({-4, -4}); move_pattern[3].push_back({-5, -5}); move_pattern[3].push_back({-6, -6}); move_pattern[3].push_back({-7, -7});
-    move_pattern[3].push_back({1, -1}); move_pattern[3].push_back({2, -2}); move_pattern[3].push_back({3, -3}); move_pattern[3].push_back({4, -4}); move_pattern[3].push_back({5, -5}); move_pattern[3].push_back({6, -6}); move_pattern[3].push_back({7, -7});
-    move_pattern[3].push_back({-1, 1}); move_pattern[3].push_back({-2, 2}); move_pattern[3].push_back({-3, 3}); move_pattern[3].push_back({-4, 4}); move_pattern[3].push_back({-5, 5}); move_pattern[3].push_back({-6, 6}); move_pattern[3].push_back({-7, 7});
+    move_pattern[3].push_back({1, 1}); move_pattern[3].push_back({2, 2}); move_pattern[3].push_back({3, 3}); move_pattern[3].push_back({4, 4}); move_pattern[3].push_back({5, 5}); move_pattern[3].push_[...]
+    move_pattern[3].push_back({-1, -1}); move_pattern[3].push_back({-2, -2}); move_pattern[3].push_back({-3, -3}); move_pattern[3].push_back({-4, -4}); move_pattern[3].push_back({-5, -5}); move_patter[...]
+    move_pattern[3].push_back({1, -1}); move_pattern[3].push_back({2, -2}); move_pattern[3].push_back({3, -3}); move_pattern[3].push_back({4, -4}); move_pattern[3].push_back({5, -5}); move_pattern[3].[...]
+    move_pattern[3].push_back({-1, 1}); move_pattern[3].push_back({-2, 2}); move_pattern[3].push_back({-3, 3}); move_pattern[3].push_back({-4, 4}); move_pattern[3].push_back({-5, 5}); move_pattern[3].[...]
 
-    move_pattern[4].push_back({1, 0}); move_pattern[4].push_back({2, 0}); move_pattern[4].push_back({3, 0}); move_pattern[4].push_back({4, 0}); move_pattern[4].push_back({5, 0}); move_pattern[4].push_back({6, 0}); move_pattern[4].push_back({7, 0});
-    move_pattern[4].push_back({-1, 0}); move_pattern[4].push_back({-2, 0}); move_pattern[4].push_back({-3, 0}); move_pattern[4].push_back({-4, 0}); move_pattern[4].push_back({-5, 0}); move_pattern[4].push_back({-6, 0}); move_pattern[4].push_back({-7, 0});
-    move_pattern[4].push_back({0, 1}); move_pattern[4].push_back({0, 2}); move_pattern[4].push_back({0, 3}); move_pattern[4].push_back({0, 4}); move_pattern[4].push_back({0, 5}); move_pattern[4].push_back({0, 6}); move_pattern[4].push_back({0, 7});
-    move_pattern[4].push_back({0, -1}); move_pattern[4].push_back({0, -2}); move_pattern[4].push_back({0, -3}); move_pattern[4].push_back({0, -4}); move_pattern[4].push_back({0, -5}); move_pattern[4].push_back({0, -6}); move_pattern[4].push_back({0, -7});   
+    move_pattern[4].push_back({1, 0}); move_pattern[4].push_back({2, 0}); move_pattern[4].push_back({3, 0}); move_pattern[4].push_back({4, 0}); move_pattern[4].push_back({5, 0}); move_pattern[4].push_[...]
+    move_pattern[4].push_back({-1, 0}); move_pattern[4].push_back({-2, 0}); move_pattern[4].push_back({-3, 0}); move_pattern[4].push_back({-4, 0}); move_pattern[4].push_back({-5, 0}); move_pattern[4].[...]
+    move_pattern[4].push_back({0, 1}); move_pattern[4].push_back({0, 2}); move_pattern[4].push_back({0, 3}); move_pattern[4].push_back({0, 4}); move_pattern[4].push_back({0, 5}); move_pattern[4].push_[...]
+    move_pattern[4].push_back({0, -1}); move_pattern[4].push_back({0, -2}); move_pattern[4].push_back({0, -3}); move_pattern[4].push_back({0, -4}); move_pattern[4].push_back({0, -5}); move_pattern[4].[...]
 
-    move_pattern[5].push_back({1, 0}); move_pattern[5].push_back({2, 0}); move_pattern[5].push_back({3, 0}); move_pattern[5].push_back({4, 0}); move_pattern[5].push_back({5, 0}); move_pattern[5].push_back({6, 0}); move_pattern[5].push_back({7, 0});
-    move_pattern[5].push_back({-1, 0}); move_pattern[5].push_back({-2, 0}); move_pattern[5].push_back({-3, 0}); move_pattern[5].push_back({-4, 0}); move_pattern[5].push_back({-5, 0}); move_pattern[5].push_back({-6, 0}); move_pattern[5].push_back({-7, 0});
-    move_pattern[5].push_back({0, 1}); move_pattern[5].push_back({0, 2}); move_pattern[5].push_back({0, 3}); move_pattern[5].push_back({0, 4}); move_pattern[5].push_back({0, 5}); move_pattern[5].push_back({0, 6}); move_pattern[5].push_back({0, 7});
-    move_pattern[5].push_back({0, -1}); move_pattern[5].push_back({0, -2}); move_pattern[5].push_back({0, -3}); move_pattern[5].push_back({0, -4}); move_pattern[5].push_back({0, -5}); move_pattern[5].push_back({0, -6}); move_pattern[5].push_back({0, -7});
-    move_pattern[5].push_back({1, 1}); move_pattern[5].push_back({2, 2}); move_pattern[5].push_back({3, 3}); move_pattern[5].push_back({4, 4}); move_pattern[5].push_back({5, 5}); move_pattern[5].push_back({6, 6}); move_pattern[5].push_back({7, 7});
-    move_pattern[5].push_back({-1, -1}); move_pattern[5].push_back({-2, -2}); move_pattern[5].push_back({-3, -3}); move_pattern[5].push_back({-4, -4}); move_pattern[5].push_back({-5, -5}); move_pattern[5].push_back({-6, -6}); move_pattern[5].push_back({-7, -7});
-    move_pattern[5].push_back({1, -1}); move_pattern[5].push_back({2, -2}); move_pattern[5].push_back({3, -3}); move_pattern[5].push_back({4, -4}); move_pattern[5].push_back({5, -5}); move_pattern[5].push_back({6, -6}); move_pattern[5].push_back({7, -7});
-    move_pattern[5].push_back({-1, 1}); move_pattern[5].push_back({-2, 2}); move_pattern[5].push_back({-3, 3}); move_pattern[5].push_back({-4, 4}); move_pattern[5].push_back({-5, 5}); move_pattern[5].push_back({-6, 6}); move_pattern[5].push_back({-7, 7});
+    move_pattern[5].push_back({1, 0}); move_pattern[5].push_back({2, 0}); move_pattern[5].push_back({3, 0}); move_pattern[5].push_back({4, 0}); move_pattern[5].push_back({5, 0}); move_pattern[5].push_[...]
+    move_pattern[5].push_back({-1, 0}); move_pattern[5].push_back({-2, 0}); move_pattern[5].push_back({-3, 0}); move_pattern[5].push_back({-4, 0}); move_pattern[5].push_back({-5, 0}); move_pattern[5].[...]
+    move_pattern[5].push_back({0, 1}); move_pattern[5].push_back({0, 2}); move_pattern[5].push_back({0, 3}); move_pattern[5].push_back({0, 4}); move_pattern[5].push_back({0, 5}); move_pattern[5].push_[...]
+    move_pattern[5].push_back({0, -1}); move_pattern[5].push_back({0, -2}); move_pattern[5].push_back({0, -3}); move_pattern[5].push_back({0, -4}); move_pattern[5].push_back({0, -5}); move_pattern[5].[...]
+    move_pattern[5].push_back({1, 1}); move_pattern[5].push_back({2, 2}); move_pattern[5].push_back({3, 3}); move_pattern[5].push_back({4, 4}); move_pattern[5].push_back({5, 5}); move_pattern[5].push_[...]
+    move_pattern[5].push_back({-1, -1}); move_pattern[5].push_back({-2, -2}); move_pattern[5].push_back({-3, -3}); move_pattern[5].push_back({-4, -4}); move_pattern[5].push_back({-5, -5}); move_patter[...]
+    move_pattern[5].push_back({1, -1}); move_pattern[5].push_back({2, -2}); move_pattern[5].push_back({3, -3}); move_pattern[5].push_back({4, -4}); move_pattern[5].push_back({5, -5}); move_pattern[5].[...]
+    move_pattern[5].push_back({-1, 1}); move_pattern[5].push_back({-2, 2}); move_pattern[5].push_back({-3, 3}); move_pattern[5].push_back({-4, 4}); move_pattern[5].push_back({-5, 5}); move_pattern[5].[...]
 
     move_pattern[6].push_back({1, 0}); move_pattern[6].push_back({-1, 0}); move_pattern[6].push_back({0, 1}); move_pattern[6].push_back({0, -1});
     move_pattern[6].push_back({1, 1}); move_pattern[6].push_back({1, -1}); move_pattern[6].push_back({-1, 1}); move_pattern[6].push_back({-1, -1});
@@ -74,24 +74,24 @@ Board::Board(){
     move_pattern[-2].push_back({2, 1}); move_pattern[-2].push_back({2, -1}); move_pattern[-2].push_back({-2, 1}); move_pattern[-2].push_back({-2, -1});
     move_pattern[-2].push_back({1, 2}); move_pattern[-2].push_back({1, -2}); move_pattern[-2].push_back({-1, 2}); move_pattern[-2].push_back({-1, -2}); 
 
-    move_pattern[-3].push_back({1, 1}); move_pattern[-3].push_back({2, 2}); move_pattern[-3].push_back({3, 3}); move_pattern[-3].push_back({4, 4}); move_pattern[-3].push_back({5, 5}); move_pattern[-3].push_back({6, 6}); move_pattern[-3].push_back({7, 7});
-    move_pattern[-3].push_back({-1, -1}); move_pattern[-3].push_back({-2, -2}); move_pattern[-3].push_back({-3, -3}); move_pattern[-3].push_back({-4, -4}); move_pattern[-3].push_back({-5, -5}); move_pattern[-3].push_back({-6, -6}); move_pattern[-3].push_back({-7, -7});
-    move_pattern[-3].push_back({1, -1}); move_pattern[-3].push_back({2, -2}); move_pattern[-3].push_back({3, -3}); move_pattern[-3].push_back({4, -4}); move_pattern[-3].push_back({5, -5}); move_pattern[-3].push_back({6, -6}); move_pattern[-3].push_back({7, -7});
-    move_pattern[-3].push_back({-1, 1}); move_pattern[-3].push_back({-2, 2}); move_pattern[-3].push_back({-3, 3}); move_pattern[-3].push_back({-4, 4}); move_pattern[-3].push_back({-5, 5}); move_pattern[-3].push_back({-6, 6}); move_pattern[-3].push_back({-7, 7});
+    move_pattern[-3].push_back({1, 1}); move_pattern[-3].push_back({2, 2}); move_pattern[-3].push_back({3, 3}); move_pattern[-3].push_back({4, 4}); move_pattern[-3].push_back({5, 5}); move_pattern[-3][...]
+    move_pattern[-3].push_back({-1, -1}); move_pattern[-3].push_back({-2, -2}); move_pattern[-3].push_back({-3, -3}); move_pattern[-3].push_back({-4, -4}); move_pattern[-3].push_back({-5, -5}); move_p[...]
+    move_pattern[-3].push_back({1, -1}); move_pattern[-3].push_back({2, -2}); move_pattern[-3].push_back({3, -3}); move_pattern[-3].push_back({4, -4}); move_pattern[-3].push_back({5, -5}); move_patter[...]
+    move_pattern[-3].push_back({-1, 1}); move_pattern[-3].push_back({-2, 2}); move_pattern[-3].push_back({-3, 3}); move_pattern[-3].push_back({-4, 4}); move_pattern[-3].push_back({-5, 5}); move_patter[...]
 
-    move_pattern[-4].push_back({1, 0}); move_pattern[-4].push_back({2, 0}); move_pattern[-4].push_back({3, 0}); move_pattern[-4].push_back({4, 0}); move_pattern[-4].push_back({5, 0}); move_pattern[-4].push_back({6, 0}); move_pattern[-4].push_back({7, 0});
-    move_pattern[-4].push_back({-1, 0}); move_pattern[-4].push_back({-2, 0}); move_pattern[-4].push_back({-3, 0}); move_pattern[-4].push_back({-4, 0}); move_pattern[-4].push_back({-5, 0}); move_pattern[-4].push_back({-6, 0}); move_pattern[-4].push_back({-7, 0});
-    move_pattern[-4].push_back({0, 1}); move_pattern[-4].push_back({0, 2}); move_pattern[-4].push_back({0, 3}); move_pattern[-4].push_back({0, 4}); move_pattern[-4].push_back({0, 5}); move_pattern[-4].push_back({0, 6}); move_pattern[-4].push_back({0, 7});
-    move_pattern[-4].push_back({0, -1}); move_pattern[-4].push_back({0, -2}); move_pattern[-4].push_back({0, -3}); move_pattern[-4].push_back({0, -4}); move_pattern[-4].push_back({0, -5}); move_pattern[-4].push_back({0, -6}); move_pattern[-4].push_back({0, -7});   
+    move_pattern[-4].push_back({1, 0}); move_pattern[-4].push_back({2, 0}); move_pattern[-4].push_back({3, 0}); move_pattern[-4].push_back({4, 0}); move_pattern[-4].push_back({5, 0}); move_pattern[-4][...]
+    move_pattern[-4].push_back({-1, 0}); move_pattern[-4].push_back({-2, 0}); move_pattern[-4].push_back({-3, 0}); move_pattern[-4].push_back({-4, 0}); move_pattern[-4].push_back({-5, 0}); move_patter[...]
+    move_pattern[-4].push_back({0, 1}); move_pattern[-4].push_back({0, 2}); move_pattern[-4].push_back({0, 3}); move_pattern[-4].push_back({0, 4}); move_pattern[-4].push_back({0, 5}); move_pattern[-4][...]
+    move_pattern[-4].push_back({0, -1}); move_pattern[-4].push_back({0, -2}); move_pattern[-4].push_back({0, -3}); move_pattern[-4].push_back({0, -4}); move_pattern[-4].push_back({0, -5}); move_patter[...]
 
-    move_pattern[-5].push_back({1, 0}); move_pattern[-5].push_back({2, 0}); move_pattern[-5].push_back({3, 0}); move_pattern[-5].push_back({4, 0}); move_pattern[-5].push_back({5, 0}); move_pattern[-5].push_back({6, 0}); move_pattern[-5].push_back({7, 0});
-    move_pattern[-5].push_back({-1, 0}); move_pattern[-5].push_back({-2, 0}); move_pattern[-5].push_back({-3, 0}); move_pattern[-5].push_back({-4, 0}); move_pattern[-5].push_back({-5, 0}); move_pattern[-5].push_back({-6, 0}); move_pattern[-5].push_back({-7, 0});
-    move_pattern[-5].push_back({0, 1}); move_pattern[-5].push_back({0, 2}); move_pattern[-5].push_back({0, 3}); move_pattern[-5].push_back({0, 4}); move_pattern[-5].push_back({0, 5}); move_pattern[-5].push_back({0, 6}); move_pattern[-5].push_back({0, 7});
-    move_pattern[-5].push_back({0, -1}); move_pattern[-5].push_back({0, -2}); move_pattern[-5].push_back({0, -3}); move_pattern[-5].push_back({0, -4}); move_pattern[-5].push_back({0, -5}); move_pattern[-5].push_back({0, -6}); move_pattern[-5].push_back({0, -7});
-    move_pattern[-5].push_back({1, 1}); move_pattern[-5].push_back({2, 2}); move_pattern[-5].push_back({3, 3}); move_pattern[-5].push_back({4, 4}); move_pattern[-5].push_back({5, 5}); move_pattern[-5].push_back({6, 6}); move_pattern[-5].push_back({7, 7});
-    move_pattern[-5].push_back({-1, -1}); move_pattern[-5].push_back({-2, -2}); move_pattern[-5].push_back({-3, -3}); move_pattern[-5].push_back({-4, -4}); move_pattern[-5].push_back({-5, -5}); move_pattern[-5].push_back({-6, -6}); move_pattern[-5].push_back({-7, -7});
-    move_pattern[-5].push_back({1, -1}); move_pattern[-5].push_back({2, -2}); move_pattern[-5].push_back({3, -3}); move_pattern[-5].push_back({4, -4}); move_pattern[-5].push_back({5, -5}); move_pattern[-5].push_back({6, -6}); move_pattern[-5].push_back({7, -7});
-    move_pattern[-5].push_back({-1, 1}); move_pattern[-5].push_back({-2, 2}); move_pattern[-5].push_back({-3, 3}); move_pattern[-5].push_back({-4, 4}); move_pattern[-5].push_back({-5, 5}); move_pattern[-5].push_back({-6, 6}); move_pattern[-5].push_back({-7, 7});
+    move_pattern[-5].push_back({1, 0}); move_pattern[-5].push_back({2, 0}); move_pattern[-5].push_back({3, 0}); move_pattern[-5].push_back({4, 0}); move_pattern[-5].push_back({5, 0}); move_pattern[-5][...]
+    move_pattern[-5].push_back({-1, 0}); move_pattern[-5].push_back({-2, 0}); move_pattern[-5].push_back({-3, 0}); move_pattern[-5].push_back({-4, 0}); move_pattern[-5].push_back({-5, 0}); move_patter[...]
+    move_pattern[-5].push_back({0, 1}); move_pattern[-5].push_back({0, 2}); move_pattern[-5].push_back({0, 3}); move_pattern[-5].push_back({0, 4}); move_pattern[-5].push_back({0, 5}); move_pattern[-5][...]
+    move_pattern[-5].push_back({0, -1}); move_pattern[-5].push_back({0, -2}); move_pattern[-5].push_back({0, -3}); move_pattern[-5].push_back({0, -4}); move_pattern[-5].push_back({0, -5}); move_patter[...]
+    move_pattern[-5].push_back({1, 1}); move_pattern[-5].push_back({2, 2}); move_pattern[-5].push_back({3, 3}); move_pattern[-5].push_back({4, 4}); move_pattern[-5].push_back({5, 5}); move_pattern[-5][...]
+    move_pattern[-5].push_back({-1, -1}); move_pattern[-5].push_back({-2, -2}); move_pattern[-5].push_back({-3, -3}); move_pattern[-5].push_back({-4, -4}); move_pattern[-5].push_back({-5, -5}); move_p[...]
+    move_pattern[-5].push_back({1, -1}); move_pattern[-5].push_back({2, -2}); move_pattern[-5].push_back({3, -3}); move_pattern[-5].push_back({4, -4}); move_pattern[-5].push_back({5, -5}); move_patter[...]
+    move_pattern[-5].push_back({-1, 1}); move_pattern[-5].push_back({-2, 2}); move_pattern[-5].push_back({-3, 3}); move_pattern[-5].push_back({-4, 4}); move_pattern[-5].push_back({-5, 5}); move_patter[...]
 
     move_pattern[-6].push_back({1, 0}); move_pattern[-6].push_back({-1, 0}); move_pattern[-6].push_back({0, 1}); move_pattern[-6].push_back({0, -1});
     move_pattern[-6].push_back({1, 1}); move_pattern[-6].push_back({1, -1}); move_pattern[-6].push_back({-1, 1}); move_pattern[-6].push_back({-1, -1});
@@ -263,12 +263,12 @@ int Board::board_eval() {
     int white_king_x = -1, white_king_y = -1;
     int black_king_x = -1, black_king_y = -1;
 
-    //  Data structures & bonus lookup for new heuristics
+    // Data structures & bonus lookup for new heuristics
     std::vector<std::pair<int, int>> white_rooks;
     std::vector<std::pair<int, int>> black_rooks;
     const int passed_pawn_bonus[8] = {0, 5, 15, 30, 60, 100, 160, 0};
 
-    //   Board boundary check helper +++
+    // Board boundary check helper
     auto is_on_board = [](int r, int c) {
         return r >= 0 && r < 8 && c >= 0 && c < 8;
     };
@@ -293,7 +293,7 @@ int Board::board_eval() {
                     if (is_white) pawn_count_white[c]++;
                     else pawn_count_black[c]++;
 
-                    // PASSED PAWN HEURISTIC 
+                    // PASSED PAWN HEURISTIC
                     {
                         bool is_passed = true;
                         int forward_dir = is_white ? 1 : -1;
@@ -321,7 +321,7 @@ int Board::board_eval() {
                 case 2: // Knight
                     pst = knight_sq_table[sq_idx];
 
-                    // +++ ADDED: KNIGHT MOBILITY +++
+                    // KNIGHT MOBILITY
                     {
                         int mobility = 0;
                         const int knight_moves[8][2] = {
@@ -339,7 +339,6 @@ int Board::board_eval() {
                     }
                     break;
 
-                // +++ ADDED: BISHOP MOBILITY
                 case 3: // Bishop
                     {
                         int mobility = 0;
@@ -377,11 +376,11 @@ int Board::board_eval() {
             }
 
             int total_piece_val = mat * 100 + (piece > 0 ? pst : -pst);
-             raw_score += total_piece_val;
+            raw_score += total_piece_val;
         }
     }
 
-    // 3. Pawn Structure Penalties (Doubled / Isolated)
+    // Pawn Structure Penalties (Doubled / Isolated)
     for (int c = 0; c < 8; ++c) {
         if (pawn_count_white[c] > 1) raw_score -= (pawn_count_white[c] - 1) * 20;
         if (pawn_count_black[c] > 1) raw_score += (pawn_count_black[c] - 1) * 20;
@@ -398,7 +397,7 @@ int Board::board_eval() {
         }
     }
 
-    // +++ CONNECTED ROOKS EVALUATION +++
+    // CONNECTED ROOKS EVALUATION
     auto eval_rook_connection = [&](const std::vector<std::pair<int, int>>& rooks) {
         if (rooks.size() < 2) return 0;
         int connection_score = 0;
@@ -434,7 +433,7 @@ int Board::board_eval() {
     raw_score += eval_rook_connection(white_rooks);
     raw_score -= eval_rook_connection(black_rooks);
 
-    // 5. King Shield Evaluation
+    // King Shield Evaluation
     auto eval_shield = [&](int k_x, int k_y, int p_type) {
         if (k_x == -1) return 0;
         int shield_score = 0;
@@ -456,9 +455,10 @@ int Board::board_eval() {
     raw_score += eval_shield(white_king_x, white_king_y, 1);
     raw_score -= eval_shield(black_king_x, black_king_y, -1);
 
-    // 6. Return relative to active player's turn
+    // Return relative to active player's turn
     return raw_score * (turn ? -1 : 1);
 }
+
 void Board::rollback_move(){
     if(rollback.empty()) return;
     auto [old_x, old_y, new_x, new_y, captured_piece, old_turn, old_move_left] = rollback.back();
