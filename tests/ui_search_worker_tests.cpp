@@ -78,8 +78,9 @@ struct ChessUITestAccess {
     static void start(ChessUI& ui) {
         ui.window.setVisible(false);
         ui.soundEffects = false;
-        ui.startGame(-1, ChessUI::GameMode::EngineVsEngine);
-        ui.slidePieces = false;
+        ui.startGame(0);
+        require(ui.game.get_current_turn() == 0 && ui.game.get_moves_left() == 1 &&
+                !ui.game.legal_moves().empty(), "initial White search fixture is invalid");
     }
     static void update(ChessUI& ui) { ui.updateEngine(); }
     static std::string position(const ChessUI& ui) { return ui.game.export_fen(); }
@@ -91,26 +92,36 @@ struct ChessUITestAccess {
         return ui.searchFuture.valid() && ui.searchFuture.wait_for(0s) == std::future_status::ready;
     }
     static void seedHistory(ChessUI& ui) {
-        require(ui.applyMove(ui.game.legal_moves().front()), "could not seed history");
-        require(ui.applyMove(ui.game.legal_moves().front()), "could not seed second history node");
+        configure(ui, 0, 0);
+        for (int action = 0; action < 4; ++action) {
+            const auto legal = ui.game.legal_moves();
+            require(!legal.empty() && ui.applyMove(legal.front()), "could not seed history");
+        }
+        require(!ui.game.has_game_ended() && ui.game.get_current_turn() == 0,
+                "history fixture did not return to the White engine");
     }
     static void frame(ChessUI& ui) { ui.handleEvents(); ui.draw(); ui.updateEngine(); }
     static bool flipped(const ChessUI& ui) { return ui.manualBoardFlip; }
-    static void configure(ChessUI& ui, int mode, int engineSide, int turn) {
-        ui.startGame(engineSide, mode == 0 ? ChessUI::GameMode::PlayerVsPlayer
-            : (mode == 1 ? ChessUI::GameMode::PlayerVsEngine : ChessUI::GameMode::EngineVsEngine));
+    static void configure(ChessUI& ui, int engineSide, int turn) {
+        ui.startGame(engineSide);
         require(ui.game.import_fen(std::string("3k4/8/8/8/8/8/8/3K4 ") +
-                (turn == 0 ? "w" : "b") + " - 2 0 1"), "mode fixture import failed");
+                (turn == 0 ? "w" : "b") + " - 2 0 1"), "side fixture import failed");
         ui.startingBoard = ui.game;
     }
-    static void slide(ChessUI& ui) { ui.slidePieces = true; }
-    static void startHumanGame(ChessUI& ui) {
-        ui.startGame(-1, ChessUI::GameMode::PlayerVsPlayer);
-        ui.slidePieces = true;
-        ui.dragPieces = false;
-        // Isolate worker timing from the existing click-slide handler's missing animatedMove assignment.
-        ui.animatedMove = Move{1, 0, 2, 0};
+    static void playerMovement(ChessUI& ui, int mode) {
+        ui.playerMoveMode = mode == 0 ? ChessUI::PlayerMoveMode::Slide
+            : (mode == 1 ? ChessUI::PlayerMoveMode::Drag : ChessUI::PlayerMoveMode::PointAndClick);
     }
+    static void startHumanGame(ChessUI& ui) {
+        ui.startGame(1);
+        playerMovement(ui, 0);
+    }
+    static bool engineTurn(const ChessUI& ui) { return ui.engineTurn(); }
+    static int historyParent(const ChessUI& ui) { return ui.historyTree.back().parent; }
+    static std::string historyPosition(const ChessUI& ui, int node) {
+        return ui.historyTree.at(node).move.boardAfterMove.export_fen();
+    }
+    static Board board(const ChessUI& ui) { return ui.game; }
     static bool animating(const ChessUI& ui) { return ui.engineMoveAnimating; }
     static void noLegalMoves(ChessUI& ui) {
         require(ui.game.import_fen("PPPPPPPk/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP/KPPPPPPP w - 1 0 1"),
@@ -118,7 +129,7 @@ struct ChessUITestAccess {
         require(!ui.game.has_game_ended() && ui.game.legal_moves().empty(), "fixture has legal moves or is terminal");
         ui.startingBoard = ui.game;
     }
-    static void backToGame(ChessUI& ui) { ui.currentScreen = ChessUI::Screen::Game; }
+
     static bool settings(const ChessUI& ui) { return ui.currentScreen == ChessUI::Screen::Settings; }
     static bool open(const ChessUI& ui) { return ui.window.isOpen(); }
 #ifdef _WIN32
@@ -128,13 +139,14 @@ struct ChessUITestAccess {
         ui.handleEvents();
     }
     static void navigate(ChessUI& ui, int node) {
-        const auto position = ui.getHistoryNodePositions().at(node);
-        click(ui, static_cast<int>(position.x + 20), static_cast<int>(position.y - ui.historyScroll + 20));
-        require(ui.historyPaused && ui.currentHistoryNode == node, "history click did not navigate and pause");
+        const auto point = ui.getHistoryNodePositions().at(node);
+        click(ui, static_cast<int>(point.x + 20), static_cast<int>(point.y - ui.historyScroll + 20));
+        require(ui.currentHistoryNode == node && position(ui) == historyPosition(ui, node),
+                "history click did not restore the selected board");
     }
-    static void resume(ChessUI& ui) {
-        click(ui, 861, 38);
-        require(!ui.historyPaused, "PLAY click did not resume");
+    static void clickSquare(ChessUI& ui, int row, int col) {
+        click(ui, ui.boardX + ui.displayCol(col) * ui.squareSize + ui.squareSize / 2,
+                ui.boardY + ui.displayRow(row) * ui.squareSize + ui.squareSize / 2);
     }
     static void close(ChessUI& ui) {
         SendMessageW(ui.window.getNativeHandle(), WM_CLOSE, 0, 0);
@@ -148,6 +160,20 @@ void waitForResult(ChessUI& ui) {
     while (!ChessUITestAccess::ready(ui) && std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(2ms);
     require(ChessUITestAccess::ready(ui), "worker did not finish within test deadline");
+}
+
+void consumeResultAndSlide(ChessUI& ui) {
+    waitForResult(ui);
+    const auto before = ChessUITestAccess::position(ui);
+    const auto movesBefore = ChessUITestAccess::moves(ui);
+    ChessUITestAccess::update(ui);
+    require(ChessUITestAccess::animating(ui) && !ChessUITestAccess::pending(ui) &&
+            ChessUITestAccess::moves(ui) == movesBefore && ChessUITestAccess::position(ui) == before,
+            "valid worker result did not start an unapplied slide");
+    std::this_thread::sleep_for(350ms);
+    ChessUITestAccess::update(ui);
+    require(!ChessUITestAccess::animating(ui) && ChessUITestAccess::moves(ui) == movesBefore + 1 &&
+            ChessUITestAccess::position(ui) != before, "engine slide did not apply exactly one move");
 }
 
 void test_search_launch_does_not_block_ui() {
@@ -208,8 +234,7 @@ void test_restart_same_position_discards_old_result() {
     require(ChessUITestAccess::moves(ui) == 0 && ChessUITestAccess::position(ui) == original,
             "restart to the same position consumed the old search result");
     ChessUITestAccess::update(ui);
-    waitForResult(ui);
-    ChessUITestAccess::update(ui);
+    consumeResultAndSlide(ui);
     require(ChessUITestAccess::moves(ui) == 1, "replacement search did not apply its result");
     for (int frame = 0; frame < 5; ++frame) ChessUITestAccess::update(ui);
     require(ChessUITestAccess::moves(ui) == 1, "result was consumed more than once");
@@ -217,7 +242,7 @@ void test_restart_same_position_discards_old_result() {
 
 #ifdef _WIN32
 void test_history_navigation_discards_old_result() {
-    for (int node : {1, 0}) {
+    for (int node : {3, 0, 1}) {
         auto gate = std::make_shared<SearchGate>();
         ChessUI ui(1, 1, std::make_unique<GatedEvaluator>(gate), std::make_unique<GatedEvaluator>(gate));
         ReleaseOnExit release{gate};
@@ -226,18 +251,65 @@ void test_history_navigation_discards_old_result() {
         std::this_thread::sleep_for(550ms);
         ChessUITestAccess::update(ui);
         require(gate->waitForEntry(), "navigation fixture search never started");
+        const auto searched = ChessUITestAccess::position(ui);
         ChessUITestAccess::navigate(ui, node);
         const auto selected = ChessUITestAccess::position(ui);
-        ChessUITestAccess::resume(ui);
+        require((selected == searched) == (node == 3), "history same/different-board fixture is invalid");
+        const bool engineTurn = ChessUITestAccess::engineTurn(ui);
+        require(engineTurn == (node != 1), "history fixture selected the wrong controller");
         std::this_thread::sleep_for(550ms);
         ChessUITestAccess::update(ui);
+        {
+            std::lock_guard<std::mutex> lock(gate->mutex);
+            require(gate->evaluations == 1 && !gate->timedOut,
+                    "history selection overlapped the old worker or waited for its watchdog");
+        }
         gate->release();
         waitForResult(ui);
         ChessUITestAccess::update(ui);
-        require(ChessUITestAccess::moves(ui) == 2 && ChessUITestAccess::position(ui) == selected,
-                "history navigation/resume consumed the invalidated search result");
+        require(ChessUITestAccess::moves(ui) == 4 && ChessUITestAccess::position(ui) == selected &&
+                !ChessUITestAccess::animating(ui) && !ChessUITestAccess::pending(ui),
+                "history navigation consumed the invalidated search result");
+        ChessUITestAccess::update(ui);
+        require(ChessUITestAccess::pending(ui) == engineTurn,
+                "selected history position did not continue according to its PvE turn");
+        if (engineTurn) {
+            consumeResultAndSlide(ui);
+            require(ChessUITestAccess::moves(ui) == 5 && ChessUITestAccess::historyParent(ui) == node,
+                    "history continuation did not branch from the selected node");
+        } else {
+            require(ChessUITestAccess::position(ui) == selected && ChessUITestAccess::moves(ui) == 4,
+                    "human history turn advanced without input");
+        }
         std::lock_guard<std::mutex> lock(gate->mutex);
         require(gate->snapshotStable && !gate->timedOut, "live navigation changed the worker board snapshot");
+    }
+}
+
+void test_history_selection_resets_delay_without_play() {
+    for (int node : {3, 0, 1}) {
+        auto gate = std::make_shared<SearchGate>();
+        gate->release();
+        ChessUI ui(0, 1, std::make_unique<GatedEvaluator>(gate));
+        ChessUITestAccess::start(ui);
+        ChessUITestAccess::seedHistory(ui);
+        std::this_thread::sleep_for(550ms);
+        ChessUITestAccess::navigate(ui, node);
+        const auto selected = ChessUITestAccess::position(ui);
+        ChessUITestAccess::update(ui);
+        require(!ChessUITestAccess::pending(ui) && !ChessUITestAccess::animating(ui) &&
+                ChessUITestAccess::position(ui) == selected, "history selection skipped its reset delay");
+        std::this_thread::sleep_for(550ms);
+        ChessUITestAccess::update(ui);
+        require(ChessUITestAccess::pending(ui) == (node != 1),
+                "history selection required PLAY or searched a human turn");
+        if (node != 1) {
+            consumeResultAndSlide(ui);
+            require(ChessUITestAccess::historyParent(ui) == node, "resumed history used the wrong parent");
+        } else {
+            require(ChessUITestAccess::moves(ui) == 4 && ChessUITestAccess::position(ui) == selected &&
+                    gate->evaluations == 0, "human history turn invoked search or moved");
+        }
     }
 }
 #endif
@@ -265,8 +337,7 @@ void test_worker_exception_is_handled_on_ui_thread() {
     ChessUITestAccess::start(ui);
     std::this_thread::sleep_for(550ms);
     ChessUITestAccess::update(ui);
-    waitForResult(ui);
-    ChessUITestAccess::update(ui);
+    consumeResultAndSlide(ui);
     require(ChessUITestAccess::moves(ui) == 1 && !ChessUITestAccess::stalled(ui) && !ChessUITestAccess::failed(ui),
             "restart did not recover after a handled worker exception");
 }
@@ -280,9 +351,16 @@ void test_only_one_worker_across_different_engine_requests() {
     std::this_thread::sleep_for(550ms);
     ChessUITestAccess::update(ui);
     require(white->waitForEntry(), "white search did not start");
-    ChessUITestAccess::configure(ui, 2, 0, 1);
+    ChessUITestAccess::configure(ui, 1, 1);
+    require(ChessUITestAccess::pending(ui), "switching engine sides dropped the outstanding future");
     std::this_thread::sleep_for(550ms);
-    ChessUITestAccess::update(ui);
+    for (int frame = 0; frame < 5; ++frame) ChessUITestAccess::update(ui);
+    require(ChessUITestAccess::pending(ui), "side restart lost the running old worker");
+    {
+        std::lock_guard<std::mutex> lock(white->mutex);
+        require(white->evaluations == 1 && !white->timedOut,
+                "switching engine sides duplicated the old search or waited for its watchdog");
+    }
     {
         std::lock_guard<std::mutex> lock(black->mutex);
         require(!black->entered, "black worker overlapped an invalidated white worker");
@@ -293,9 +371,14 @@ void test_only_one_worker_across_different_engine_requests() {
     require(ChessUITestAccess::moves(ui) == 0, "old white result applied to black position");
     ChessUITestAccess::update(ui);
     require(black->waitForEntry(), "replacement black search did not start after white finished");
+    for (int frame = 0; frame < 5; ++frame) ChessUITestAccess::update(ui);
+    {
+        std::lock_guard<std::mutex> lock(black->mutex);
+        require(black->worker != std::this_thread::get_id() && black->evaluations == 1 && !black->timedOut,
+                "replacement Black engine ran on the UI thread or launched duplicate workers");
+    }
     black->release();
-    waitForResult(ui);
-    ChessUITestAccess::update(ui);
+    consumeResultAndSlide(ui);
     require(ChessUITestAccess::moves(ui) == 1 && !ChessUITestAccess::stalled(ui), "replacement black search did not apply");
 }
 
@@ -315,36 +398,38 @@ void test_restart_discards_an_already_ready_result() {
             !ChessUITestAccess::pending(ui), "restart consumed an already completed stale result");
 }
 
-void test_modes_and_sides_use_only_the_assigned_engine() {
+void test_pve_sides_use_only_the_assigned_engine() {
     auto white = std::make_shared<SearchGate>();
     auto black = std::make_shared<SearchGate>();
     white->release();
     black->release();
     ChessUI ui(1, 1, std::make_unique<GatedEvaluator>(white), std::make_unique<GatedEvaluator>(black));
     ChessUITestAccess::start(ui);
-    for (int mode : {0, 1, 2}) {
-        for (int side : {0, 1}) {
-            for (int turn : {0, 1}) {
-                ChessUITestAccess::configure(ui, mode, side, turn);
-                const auto before = ChessUITestAccess::position(ui);
-                const int whiteBefore = white->evaluations, blackBefore = black->evaluations;
-                std::this_thread::sleep_for(550ms);
-                ChessUITestAccess::update(ui);
-                const bool engineTurn = mode == 2 || (mode == 1 && side == turn);
-                require(ChessUITestAccess::pending(ui) == engineTurn, "mode/side launched an unassigned engine or no engine");
-                if (engineTurn) {
-                    waitForResult(ui);
-                    require(ChessUITestAccess::position(ui) == before && ChessUITestAccess::moves(ui) == 0,
-                            "ready worker applied the move without UI consumption");
-                    ChessUITestAccess::update(ui);
-                    require(ChessUITestAccess::moves(ui) == 1 && !ChessUITestAccess::stalled(ui), "assigned engine move was not applied");
-                    // A warm TT search need not call its evaluator again.
-                    require(turn == 0 ? black->evaluations == blackBefore : white->evaluations == whiteBefore,
-                            "worker touched the unassigned evaluator");
-                } else {
-                    require(ChessUITestAccess::position(ui) == before && white->evaluations == whiteBefore &&
-                            black->evaluations == blackBefore, "human turn invoked search");
-                }
+    for (int side : {0, 1}) {
+        for (int turn : {0, 1}) {
+            ChessUITestAccess::configure(ui, side, turn);
+            const auto before = ChessUITestAccess::position(ui);
+            const int whiteBefore = white->evaluations, blackBefore = black->evaluations;
+            std::this_thread::sleep_for(550ms);
+            ChessUITestAccess::update(ui);
+            const bool engineTurn = side == turn;
+            require(ChessUITestAccess::pending(ui) == engineTurn,
+                    "PvE side launched an unassigned engine or no engine");
+            if (engineTurn) {
+                waitForResult(ui);
+                require(ChessUITestAccess::position(ui) == before && ChessUITestAccess::moves(ui) == 0,
+                        "ready worker applied the move without UI consumption");
+                consumeResultAndSlide(ui);
+                require(ChessUITestAccess::moves(ui) == 1 && !ChessUITestAccess::stalled(ui),
+                        "assigned engine move was not applied");
+                // A warm TT search need not call its evaluator again.
+                require(turn == 0 ? black->evaluations == blackBefore : white->evaluations == whiteBefore,
+                        "worker touched the unassigned evaluator");
+            } else {
+                for (int frame = 0; frame < 5; ++frame) ChessUITestAccess::update(ui);
+                require(!ChessUITestAccess::pending(ui) && ChessUITestAccess::position(ui) == before &&
+                        white->evaluations == whiteBefore && black->evaluations == blackBefore,
+                        "human turn invoked search");
             }
         }
     }
@@ -354,23 +439,35 @@ void test_delay_and_slide_gates_are_preserved() {
     auto gate = std::make_shared<SearchGate>();
     gate->release();
     ChessUI ui(1, 1, std::make_unique<GatedEvaluator>(gate));
-    ChessUITestAccess::start(ui);
-    ChessUITestAccess::slide(ui);
-    ChessUITestAccess::update(ui);
-    require(!ChessUITestAccess::pending(ui), "search skipped the existing pre-search delay");
-    std::this_thread::sleep_for(550ms);
-    ChessUITestAccess::update(ui);
-    waitForResult(ui);
-    ChessUITestAccess::update(ui);
-    require(ChessUITestAccess::animating(ui) && ChessUITestAccess::moves(ui) == 0 &&
-            !ChessUITestAccess::pending(ui), "search result skipped slide animation or remained pending");
-    ChessUITestAccess::update(ui);
-    require(ChessUITestAccess::animating(ui) && ChessUITestAccess::moves(ui) == 0, "slide applied its move too early");
-    std::this_thread::sleep_for(350ms);
-    ChessUITestAccess::update(ui);
-    require(!ChessUITestAccess::animating(ui) && ChessUITestAccess::moves(ui) == 1, "slide did not apply exactly one move");
-    ChessUITestAccess::update(ui);
-    require(!ChessUITestAccess::pending(ui) && ChessUITestAccess::moves(ui) == 1, "animation started a duplicate search/move");
+    for (int movement : {0, 1, 2}) {
+        ChessUITestAccess::start(ui);
+        ChessUITestAccess::playerMovement(ui, movement);
+        const auto before = ChessUITestAccess::position(ui);
+        ChessUITestAccess::update(ui);
+        require(!ChessUITestAccess::pending(ui), "search skipped the existing pre-search delay");
+        std::this_thread::sleep_for(350ms);
+        ChessUITestAccess::update(ui);
+        require(!ChessUITestAccess::pending(ui) && !ChessUITestAccess::animating(ui),
+                "search launched before the existing half-second delay");
+        std::this_thread::sleep_for(200ms);
+        ChessUITestAccess::update(ui);
+        waitForResult(ui);
+        ChessUITestAccess::update(ui);
+        require(ChessUITestAccess::animating(ui) && ChessUITestAccess::moves(ui) == 0 &&
+                ChessUITestAccess::position(ui) == before && !ChessUITestAccess::pending(ui),
+                "engine result skipped its mandatory slide for a player movement setting");
+        std::this_thread::sleep_for(100ms);
+        ChessUITestAccess::update(ui);
+        require(ChessUITestAccess::animating(ui) && ChessUITestAccess::moves(ui) == 0 &&
+                ChessUITestAccess::position(ui) == before, "slide applied its move too early");
+        std::this_thread::sleep_for(250ms);
+        ChessUITestAccess::update(ui);
+        require(!ChessUITestAccess::animating(ui) && ChessUITestAccess::moves(ui) == 1,
+                "slide did not apply exactly one move");
+        ChessUITestAccess::update(ui);
+        require(!ChessUITestAccess::pending(ui) && ChessUITestAccess::moves(ui) == 1,
+                "animation started a duplicate search/move");
+    }
 }
 
 void test_false_search_stops_without_applying_a_move() {
@@ -409,8 +506,7 @@ void test_stale_exception_is_discarded_and_restart_recovers() {
     gate->throwOnEvaluation = false;
     std::this_thread::sleep_for(550ms);
     ChessUITestAccess::update(ui);
-    waitForResult(ui);
-    ChessUITestAccess::update(ui);
+    consumeResultAndSlide(ui);
     require(ChessUITestAccess::moves(ui) == 1 && !ChessUITestAccess::stalled(ui), "restart did not recover after stale exception");
 }
 
@@ -430,8 +526,10 @@ void test_settings_holds_ready_result_until_game_resumes() {
     waitForResult(ui);
     ChessUITestAccess::update(ui);
     require(ChessUITestAccess::pending(ui) && ChessUITestAccess::moves(ui) == 0, "settings consumed ready search result");
-    ChessUITestAccess::backToGame(ui);
-    ChessUITestAccess::update(ui);
+    require(!ChessUITestAccess::animating(ui), "settings started engine animation");
+    ChessUITestAccess::click(ui, 46, 54);
+    require(!ChessUITestAccess::settings(ui), "settings back event did not return to the game");
+    consumeResultAndSlide(ui);
     require(ChessUITestAccess::moves(ui) == 1, "return from settings lost the valid result");
 }
 
@@ -444,15 +542,28 @@ void test_stale_search_does_not_delay_human_animation() {
     ChessUITestAccess::update(ui);
     require(gate->waitForEntry(), "human-animation search never started");
     ChessUITestAccess::startHumanGame(ui);
-    ChessUITestAccess::click(ui, 90, 200);
-    ChessUITestAccess::click(ui, 90, 280);
-    require(ChessUITestAccess::animating(ui), "human move click did not start animation");
+    Board expected = ChessUITestAccess::board(ui);
+    require(expected.make_move(Move{1, 0, 2, 0}), "human click fixture is not legal");
+    const auto before = ChessUITestAccess::position(ui);
+    ChessUITestAccess::clickSquare(ui, 1, 0);
+    ChessUITestAccess::clickSquare(ui, 2, 0);
+    require(ChessUITestAccess::animating(ui) && ChessUITestAccess::moves(ui) == 0 &&
+            ChessUITestAccess::position(ui) == before, "human move click did not start an unapplied animation");
     std::this_thread::sleep_for(350ms);
     ChessUITestAccess::update(ui);
-    require(ChessUITestAccess::moves(ui) == 1 && !ChessUITestAccess::animating(ui),
+    require(ChessUITestAccess::moves(ui) == 1 && !ChessUITestAccess::animating(ui) &&
+            ChessUITestAccess::position(ui) == expected.export_fen() && ChessUITestAccess::pending(ui),
             "invalidated search delayed the new human game's animation");
-    std::lock_guard<std::mutex> lock(gate->mutex);
-    require(!gate->released && !gate->timedOut, "old search was not still gated during human move");
+    {
+        std::lock_guard<std::mutex> lock(gate->mutex);
+        require(!gate->released && !gate->timedOut, "old search was not still gated during human move");
+    }
+    gate->release();
+    waitForResult(ui);
+    ChessUITestAccess::update(ui);
+    require(ChessUITestAccess::moves(ui) == 1 && !ChessUITestAccess::animating(ui) &&
+            !ChessUITestAccess::pending(ui) && ChessUITestAccess::position(ui) == expected.export_fen(),
+            "old result changed the board after the real human slide");
 }
 
 void test_close_returns_but_destruction_joins_worker() {
@@ -491,6 +602,8 @@ int main() {
 #ifdef _WIN32
         test_history_navigation_discards_old_result();
         std::cout << "PASS history_navigation_discards_old_result (same/different board)\n";
+        test_history_selection_resets_delay_without_play();
+        std::cout << "PASS history_selection_resets_delay_without_play\n";
 #endif
         test_worker_exception_is_handled_on_ui_thread();
         std::cout << "PASS worker_exception_is_handled_on_ui_thread\n";
@@ -498,8 +611,8 @@ int main() {
         std::cout << "PASS only_one_worker_across_different_engine_requests\n";
         test_restart_discards_an_already_ready_result();
         std::cout << "PASS restart_discards_an_already_ready_result\n";
-        test_modes_and_sides_use_only_the_assigned_engine();
-        std::cout << "PASS modes_and_sides_use_only_the_assigned_engine\n";
+        test_pve_sides_use_only_the_assigned_engine();
+        std::cout << "PASS pve_sides_use_only_the_assigned_engine\n";
         test_delay_and_slide_gates_are_preserved();
         std::cout << "PASS delay_and_slide_gates_are_preserved\n";
         test_false_search_stops_without_applying_a_move();

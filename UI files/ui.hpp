@@ -77,16 +77,9 @@ private:
     int engineSide = 0;
     sf::RenderWindow window;
 
-    enum class Screen {
-        StartScreen, MainMenu, ChooseSide, Game, Promotion,
-        Settings, EndGame, Account, MatchHistory
-    };
+    enum class Screen { StartScreen, ChooseSide, Game, Promotion, Settings, EndGame, Account, MatchHistory };
 
-    enum class GameMode {
-        PlayerVsPlayer,
-        PlayerVsEngine,
-        EngineVsEngine
-    };
+    enum class PlayerMoveMode { Slide, Drag, PointAndClick };
 
     enum class HistoryStyle {
         Pictogram,
@@ -99,11 +92,18 @@ private:
         std::vector<int> children;
     };
 
+    struct HistoryScrollBar {
+        float x, y, height, thumbY, thumbHeight, maxScroll;
+    };
+
+    struct HistoryHorizontalScrollBar {
+        float x, y, width, thumbX, thumbWidth, maxScroll;
+    };
+
     Screen currentScreen = Screen::StartScreen;
-    Screen previousScreen = Screen::MainMenu;
-    Screen accountReturnScreen = Screen::MainMenu;
-    Screen matchHistoryReturnScreen = Screen::MainMenu;
-    GameMode gameMode = GameMode::PlayerVsPlayer;
+    Screen previousScreen = Screen::Game;
+    Screen accountReturnScreen = Screen::ChooseSide;
+    Screen matchHistoryReturnScreen = Screen::Account;
     HistoryStyle historyStyle = HistoryStyle::Pictogram;
 
     sf::Clock engineMoveClock;
@@ -116,17 +116,13 @@ private:
     int animatedToCol = -1;
     int animatedPiece = 0;
     Move animatedMove{};
-    bool slidePieces = true;
+    PlayerMoveMode playerMoveMode = PlayerMoveMode::Drag;
     bool fullscreen = false;
     const float engineMoveDelaySeconds = 0.5f;
     const float engineSlideSeconds = 0.3f;
 
-    int promotionFromRow = -1;
-    int promotionFromCol = -1;
-    int promotionToRow = -1;
-    int promotionToCol = -1;
+    Move pendingPromotion{};
 
-    bool dragPieces = true;
     bool showPossibleMoves = true;
     bool pieceSelected = false;
     int selectedRow = -1;
@@ -136,6 +132,8 @@ private:
     int currentHistoryNode = -1;
     int hoveredHistoryNode = -1;
     float historyHorizontalScroll = 0.f;
+    bool historyHorizontalScrollbarDragging = false;
+    float historyHorizontalScrollbarGrabOffset = 0.f;
 
     int pieceTheme = 0;
     int settingsTab = 0;
@@ -144,7 +142,6 @@ private:
     bool manualBoardFlip = false;
     bool showCoordinates = true;
     bool soundEffects = true;
-    bool historyPaused = false;
     bool accountSignUpMode = false;
     bool accountPasswordField = false;
     bool accountSignedIn = false;
@@ -181,8 +178,8 @@ private:
     sf::Texture whiteTileTexture;
     sf::Texture blackTileTexture;
 
-    sf::Texture startBackgroundTexture;
     sf::Texture selectionFrameTexture;
+    sf::Texture startBackgroundTexture;
     sf::Clock selectionFrameClock;
     int selectionFrame = 1;
     const int selectionFrameCount = 96;
@@ -229,7 +226,6 @@ private:
     void loadPieceTextures();
     void handleEvents();
     void updateEngine();
-    bool applyMove(int fromRow, int fromCol, int toRow, int toCol, int promotionPiece = 0);
     bool applyMove(const Move& move);
     bool engineTurn() const;
     void updateResponsiveView(unsigned int width, unsigned int height);
@@ -248,9 +244,8 @@ private:
     void drawBoard();
     void drawSidePanel();
     void drawText();
-    void drawStartScreen();
-    void drawMainMenu();
     void updateSelectionVideo();
+    void drawStartScreen();
     void drawChooseSide();
     void drawSettings();
     void drawGameplaySettings();
@@ -268,12 +263,15 @@ private:
     int displayCol(int col) const;
     std::vector<sf::Vector2f> getHistoryNodePositions() const;
     int getHistoryDepth(int nodeIndex) const;
+    HistoryScrollBar getHistoryScrollBar() const;
+    HistoryHorizontalScrollBar getHistoryHorizontalScrollBar() const;
+    void scrollHistoryHorizontalFromMouse(float mouseX);
     void drawMoveArrow(const MoveHistoryEntry& move);
     void drawBoardPosition(Board& board);
     std::string moveToText(const MoveHistoryEntry& move) const;
     void rebuildLinearHistoryFromNode(int nodeIndex);
     void selectPiece(int row, int col);
     void clearSelection();
-    void startGame(int engineSide, GameMode mode);
+    void startGame(int engineSide);
     void playSound(const sf::SoundBuffer& buffer);
 };
