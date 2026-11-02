@@ -1,4 +1,3 @@
-
 name: Test Tactical Evaluator
 
 on:
@@ -9,17 +8,15 @@ on:
 jobs:
   test-evaluator:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check compiler
-        run: g++ --version
-
-      - name: Compile tactical evaluator
+      - name: Compile and run tactical evaluator tests
         run: |
-          g++ -std=c++17 -Wall -Wextra \
-            -I. -fsyntax-only \
-            Engines/TacticalEvaluator.cpp
-
+          g++ -std=c++17 -O2 -Wall -Wextra -I. \
+            tests/tactical_evaluator_test.cpp \
+            Engines/TacticalEvaluator.cpp \
+            evaluator.cpp board.cpp \
+            -o tactical_evaluator_test
+          ./tactical_evaluator_test
