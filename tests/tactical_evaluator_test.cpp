@@ -31,9 +31,9 @@ int main() {
         // 1. Standard starting position: scores must be finite (int) and
         // swapping just the side to move should reverse their sign.
         Board start_white = from_fen(
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq 1 0 1");
         Board start_black = from_fen(
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1");
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq 1 0 1");
         const int white_score = tactical.evaluate(start_white);
         const int black_score = tactical.evaluate(start_black);
         std::cout << "Starting position (white to move): " << white_score << '\n';
@@ -47,9 +47,9 @@ int main() {
         // incremental tactical adjustment to exclude positional differences
         // already captured by StandardEvaluator.
         Board rook_attacked = from_fen(
-            "7k/6b1/8/8/3R4/8/8/K7 w - - 0 1");
+            "7k/6b1/8/8/3R4/8/8/K7 w - 1 0 1");
         Board rook_safe = from_fen(
-            "7k/8/6b1/8/3R4/8/8/K7 w - - 0 1");
+            "7k/8/6b1/8/3R4/8/8/K7 w - 1 0 1");
         const int attacked_adjustment = tactical_adjustment(
             rook_attacked, tactical, baseline);
         const int safe_adjustment = tactical_adjustment(
@@ -70,4 +70,3 @@ int main() {
         return 1;
     }
 }
-
