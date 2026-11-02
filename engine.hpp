@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <array>
+#include <atomic>
 #include <memory>
 #include <deque>
 #include <vector>
@@ -45,11 +46,12 @@ class Engine {
     std::array<std::array<std::array<std::uint32_t, 64>, 64>, 2> history_scores{};
 
     static constexpr int kMaxQuiescencePly = 8;
-    int quiescence_search(Board& board, int alpha, int beta, int capture_ply);
+    int quiescence_search(Board& board, int alpha, int beta, int capture_ply,
+                           const std::atomic<bool>* stop = nullptr);
 
     int negamax_search(Board& board, int depth, int max_depth,
                        int alpha, int beta, Move* root_move = nullptr,
-                       std::size_t action_ply = 0);
+                       std::size_t action_ply = 0, const std::atomic<bool>* stop = nullptr);
 
     std::deque<std::pair<int,Hash>> evaluation_cache;
 
@@ -68,7 +70,8 @@ public:
 
     bool is_turn(const Board& board) const;
     int evaluate(const Board& board) const;
-    bool find_best_move(const Board& position, int search_depth = -1);
+    bool find_best_move(const Board& position, int search_depth = -1,
+                        const std::atomic<bool>* stop = nullptr);
     const Move& get_best_move() const;
     std::size_t get_search_nodes() const;
     std::size_t get_closed_window_nodes() const;

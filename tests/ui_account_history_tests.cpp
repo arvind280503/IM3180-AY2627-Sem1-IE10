@@ -27,9 +27,7 @@ struct ChessUITestAccess {
     static bool signed_in(const ChessUI& ui) { return ui.accountSignedIn; }
     static const std::string& name(const ChessUI& ui) { return ui.accountName; }
     static bool password_cleared(const ChessUI& ui) { return ui.accountPassword.empty(); }
-    static void start_pvp(ChessUI& ui) { ui.startGame(-1, ChessUI::GameMode::PlayerVsPlayer); }
-    static void start_pve(ChessUI& ui, int engine_side) { ui.startGame(engine_side, ChessUI::GameMode::PlayerVsEngine); }
-    static void start_eve(ChessUI& ui) { ui.startGame(-1, ChessUI::GameMode::EngineVsEngine); }
+    static void start_pve(ChessUI& ui, int engine_side) { ui.startGame(engine_side); }
     static bool apply(ChessUI& ui, const Move& move) { return ui.applyMove(move); }
     static void record(ChessUI& ui) { ui.recordCompletedMatch(); }
     static void return_to_root(ChessUI& ui) {
@@ -46,13 +44,15 @@ struct ChessUITestAccess {
     static const auto& summaries(const ChessUI& ui) { return ui.matchSummaries; }
     static const std::string& history_message(const ChessUI& ui) { return ui.matchHistoryMessage; }
     static const std::string& save_message(const ChessUI& ui) { return ui.matchSaveMessage; }
-    static void main_menu(ChessUI& ui) { ui.currentScreen = ChessUI::Screen::MainMenu; }
+    static void choose_side(ChessUI& ui) { ui.currentScreen = ChessUI::Screen::ChooseSide; }
     static bool account_screen(const ChessUI& ui) { return ui.currentScreen == ChessUI::Screen::Account; }
-    static bool main_menu_screen(const ChessUI& ui) { return ui.currentScreen == ChessUI::Screen::MainMenu; }
+    static bool choose_side_screen(const ChessUI& ui) { return ui.currentScreen == ChessUI::Screen::ChooseSide; }
 #ifdef _WIN32
     static void click(ChessUI& ui, int x, int y) {
-        SendMessageW(ui.window.getNativeHandle(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
-        SendMessageW(ui.window.getNativeHandle(), WM_LBUTTONUP, 0, MAKELPARAM(x, y));
+        const auto pixel = ui.window.mapCoordsToPixel(
+            {static_cast<float>(x), static_cast<float>(y)}, ui.logicalView);
+        SendMessageW(ui.window.getNativeHandle(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(pixel.x, pixel.y));
+        SendMessageW(ui.window.getNativeHandle(), WM_LBUTTONUP, 0, MAKELPARAM(pixel.x, pixel.y));
         ui.handleEvents();
     }
 #endif
@@ -110,7 +110,7 @@ void test_terminal_branch_saved_once_for_original_account(ChessUI& ui, LocalStor
         game.mainline = moves;
         store.save_game(owner, side, game);
     });
-    ChessUITestAccess::start_pvp(ui);
+    ChessUITestAccess::start_pve(ui, 1);
     ChessUITestAccess::record(ui);
     require(recordings == 0, "unfinished match was recorded");
     Board root;
@@ -124,7 +124,7 @@ void test_terminal_branch_saved_once_for_original_account(ChessUI& ui, LocalStor
     require(recordings == 1, "same match was saved twice");
     const auto saved = store.games("alice");
     require(saved.size() == 1 && saved[0].mainline == expected && saved[0].player_side == 0 &&
-                saved[0].white == "alice" && saved[0].black == "Guest" && !saved[0].date.empty(),
+                saved[0].white == "alice" && saved[0].black == "Engine" && !saved[0].date.empty(),
             "saved history includes another branch or has the wrong player association");
     require(ChessUITestAccess::tree_size(ui) > expected.size() && store.games("bob").empty(),
             "fixture did not branch or account switch reassigned the match");
@@ -152,14 +152,15 @@ void test_history_provider_receives_current_account(ChessUI& ui, LocalStore& sto
     ChessUITestAccess::identity(ui, "alice");
 }
 
-void test_modes_record_only_played_sides(ChessUI& ui) {
+void test_pve_records_only_signed_in_human_sides(ChessUI& ui) {
     int recordings = 0;
     int recorded_side = -1;
-    std::string white, black;
-    ui.setMatchRecorder([&](const std::string&, int side, const ChessUI::MatchSummary& summary,
+    std::string owner, white, black;
+    ui.setMatchRecorder([&](const std::string& username, int side, const ChessUI::MatchSummary& summary,
                             const std::vector<Move>&) {
         ++recordings;
         recorded_side = side;
+        owner = username;
         white = summary.white;
         black = summary.black;
     });
@@ -168,19 +169,19 @@ void test_modes_record_only_played_sides(ChessUI& ui) {
         ChessUITestAccess::start_pve(ui, engine_side);
         const int previous = recordings;
         play(ui, moves);
-        require(recordings == previous + 1 && recorded_side == 1 - engine_side &&
+        require(recordings == previous + 1 && owner == "alice" && recorded_side == 1 - engine_side &&
                     (recorded_side == 0 ? white == "alice" && black == "Engine"
                                         : white == "Engine" && black == "alice"),
                 "player-vs-engine side or labels are wrong");
     }
     const int previous = recordings;
-    ChessUITestAccess::start_eve(ui);
-    play(ui, moves);
-    require(recordings == previous, "engine-vs-engine was recorded as a played match");
     ChessUITestAccess::identity(ui, "");
-    ChessUITestAccess::start_pvp(ui);
-    play(ui, moves);
-    require(recordings == previous, "guest game was assigned to an account");
+    for (int engine_side : {0, 1}) {
+        ChessUITestAccess::start_pve(ui, engine_side);
+        play(ui, moves);
+        ChessUITestAccess::record(ui);
+        require(recordings == previous, "guest player-vs-engine game was assigned to an account");
+    }
     ChessUITestAccess::identity(ui, "alice");
     ui.setMatchRecorder({});
 }
@@ -205,7 +206,7 @@ void test_save_failure_retries_without_duplicate_game(ChessUI& ui, LocalStore& s
             summaries.push_back({game.white, game.black, game.result, game.date});
         return summaries;
     });
-    ChessUITestAccess::start_pvp(ui);
+    ChessUITestAccess::start_pve(ui, 1);
     play(ui, completed_mainline());
     require(attempts == 1 && !ChessUITestAccess::save_message(ui).empty() &&
                 store.games("alice").size() == previous_count, "save failure was hidden or persisted a game");
@@ -222,19 +223,19 @@ void test_save_failure_retries_without_duplicate_game(ChessUI& ui, LocalStore& s
 }
 
 #ifdef _WIN32
-void test_main_menu_profile_and_logout_clicks(ChessUI& ui) {
-    ChessUITestAccess::main_menu(ui);
+void test_choose_side_profile_and_logout_clicks(ChessUI& ui) {
+    ChessUITestAccess::choose_side(ui);
     ChessUITestAccess::click(ui, 1113, 40);
-    require(ChessUITestAccess::account_screen(ui), "main menu profile button did not open accounts");
+    require(ChessUITestAccess::account_screen(ui), "side selection profile button did not open accounts");
     bool logged_out = false;
     ui.setLogoutHandler([&] { logged_out = true; });
     ChessUITestAccess::click(ui, 600, 520);
     require(logged_out && !ChessUITestAccess::signed_in(ui) && ChessUITestAccess::name(ui).empty() &&
                 ChessUITestAccess::password_cleared(ui) && ChessUITestAccess::summaries(ui).empty() &&
-                ChessUITestAccess::main_menu_screen(ui), "sign-out click did not clear session and history");
+                ChessUITestAccess::choose_side_screen(ui), "sign-out click did not clear session and history");
     ui.setLogoutHandler({});
     ChessUITestAccess::click(ui, 1113, 40);
-    require(ChessUITestAccess::account_screen(ui), "signed-out user cannot open login from main menu");
+    require(ChessUITestAccess::account_screen(ui), "signed-out user cannot open login from side selection");
     ChessUITestAccess::submit(ui, "alice", "abc", false);
     require(ChessUITestAccess::signed_in(ui), "account could not sign back in after logout");
 }
@@ -252,10 +253,10 @@ int main(int argc, char** argv) {
             test_demo_account_does_not_bypass_authentication(ui, store);
             test_terminal_branch_saved_once_for_original_account(ui, store);
             test_history_provider_receives_current_account(ui, store);
-            test_modes_record_only_played_sides(ui);
+            test_pve_records_only_signed_in_human_sides(ui);
             test_save_failure_retries_without_duplicate_game(ui, store);
 #ifdef _WIN32
-            test_main_menu_profile_and_logout_clicks(ui);
+            test_choose_side_profile_and_logout_clicks(ui);
 #endif
         }
         std::filesystem::remove_all(directory);
