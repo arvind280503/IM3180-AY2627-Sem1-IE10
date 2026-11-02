@@ -16,6 +16,7 @@
         "${workspaceFolder}/engine.cpp",
         "${workspaceFolder}/Engines/NewEvaluator.cpp",
         "${workspaceFolder}/Engines/SecondEvaluator.cpp",
+        "${workspaceFolder}/Engines/TacticalEvaluator.cpp",
         "${workspaceFolder}/storage/local_store.cpp",
         "${workspaceFolder}/UI files/ui.cpp",
         "-o",
