@@ -1,0 +1,24 @@
+
+name: Test Tactical Evaluator
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-evaluator:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check compiler
+        run: g++ --version
+
+      - name: Compile tactical evaluator
+        run: |
+          g++ -std=c++17 -Wall -Wextra \
+            -I. -fsyntax-only \
+            Engines/TacticalEvaluator.cpp
