@@ -1,6 +1,7 @@
 #include "UI files/ui.hpp"
 #include "Engines/NewEvaluator.hpp"
 #include "Engines/SecondEvaluator.hpp"
+#include "Engines/TacticalEvaluator.hpp"
 #include "storage/local_store.hpp"
 #include <iostream>
 
@@ -10,7 +11,7 @@ int main() {
         ChessUI ui(
             1,
             Engine::kDefaultSearchDepth,
-            std::make_unique<SecondEvaluator>(),
+            std::make_unique<TacticalEvaluator>(),
             std::make_unique<NewEvaluator>()
         );
         ui.setAuthHandler([&](const std::string& username, const std::string& password, bool sign_up) {
