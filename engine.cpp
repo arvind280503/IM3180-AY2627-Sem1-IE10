@@ -4,6 +4,14 @@
 #include <limits>
 #include <stdexcept>
 
+namespace {
+struct SearchCancelled {};
+
+void check_cancelled(const std::atomic<bool>* stop) {
+    if (stop && stop->load(std::memory_order_relaxed)) throw SearchCancelled{};
+}
+}
+
 Engine::Engine(int engine_side, int search_depth,
                std::unique_ptr<Evaluator> engine_evaluator)
     : side(engine_side), default_search_depth(search_depth),
@@ -143,21 +151,30 @@ std::vector<Move> Engine::order_moves(Board& board,
     return moves;
 }
 
-int Engine::quiescence_search(Board& board, int alpha, int beta, int capture_ply) {
+int Engine::quiescence_search(Board& board, int alpha, int beta, int capture_ply,
+                               const std::atomic<bool>* stop) {
+    check_cancelled(stop);
     ++search_nodes;
     if (alpha >= beta) ++closed_window_nodes;
-    if (board.has_game_ended()) return evaluate(board);
+    if (board.has_game_ended()) {
+        const int score = evaluate(board);
+        check_cancelled(stop);
+        return score;
+    }
 
     int best_score = evaluate(board);
+    check_cancelled(stop);
     if (board.get_moves_left() != 2) return best_score;
     const int turn_before = board.get_current_turn();
     const std::vector<Move> moves = order_moves(board, 0);
     for (const Move& move : moves) {
+        check_cancelled(stop);
         if (std::abs(board.get_piece(move.new_x, move.new_y)) != 6) continue;
         if (!board.make_move(move)) continue;
         const int terminal_score = board.get_current_turn() != turn_before
             ? -evaluate(board) : evaluate(board);
         board.rollback_move();
+        check_cancelled(stop);
         return terminal_score;
     }
 
@@ -165,13 +182,15 @@ int Engine::quiescence_search(Board& board, int alpha, int beta, int capture_ply
     alpha = std::max(alpha, best_score);
 
     for (const Move& move : moves) {
+        check_cancelled(stop);
         if (board.get_piece(move.new_x, move.new_y) == 0) continue;
         if (!board.make_move(move)) continue;
         const bool turn_changed = board.get_current_turn() != turn_before;
         const int score = turn_changed
-            ? -quiescence_search(board, -beta, -alpha, capture_ply + 1)
-            : quiescence_search(board, alpha, beta, capture_ply + 1);
+            ? -quiescence_search(board, -beta, -alpha, capture_ply + 1, stop)
+            : quiescence_search(board, alpha, beta, capture_ply + 1, stop);
         board.rollback_move();
+        check_cancelled(stop);
         best_score = std::max(best_score, score);
         alpha = std::max(alpha, score);
         if (alpha >= beta) break;
@@ -180,13 +199,22 @@ int Engine::quiescence_search(Board& board, int alpha, int beta, int capture_ply
 }
 
 int Engine::negamax_search(Board& board, int depth, int max_depth,
-                           int alpha, int beta, Move* root_move, std::size_t action_ply) {
+                           int alpha, int beta, Move* root_move, std::size_t action_ply,
+                           const std::atomic<bool>* stop) {
+    check_cancelled(stop);
     ++search_nodes;
     if (alpha >= beta) ++closed_window_nodes;
 
-    if (board.has_game_ended()) return evaluate(board);
-    if (board.get_moves_left() == 2 && depth >= max_depth)
-        return quiescence_search(board, alpha, beta, 0);
+    if (board.has_game_ended()) {
+        const int score = evaluate(board);
+        check_cancelled(stop);
+        return score;
+    }
+    if (board.get_moves_left() == 2 && depth >= max_depth) {
+        const int score = quiescence_search(board, alpha, beta, 0, stop);
+        check_cancelled(stop);
+        return score;
+    }
 
     const Hash key = board.get_hash();
     const int original_alpha = alpha;
@@ -241,6 +269,7 @@ int Engine::negamax_search(Board& board, int depth, int max_depth,
 
     for (const Move& move : moves) {
         const bool window_was_open = alpha < beta;
+        check_cancelled(stop);
         if (!board.make_move(move)) continue;
 
         bool turn_changed = board.get_current_turn() != turn_before;
@@ -248,27 +277,28 @@ int Engine::negamax_search(Board& board, int depth, int max_depth,
         if (turn_changed) {
             if (!found_move) {
                 child_score = -negamax_search(board, depth + 1, max_depth,
-                                              -beta, -alpha, nullptr, action_ply + 1);
+                                              -beta, -alpha, nullptr, action_ply + 1, stop);
             } else {
                 child_score = -negamax_search(board, depth + 1, max_depth,
-                                              -alpha - 1, -alpha, nullptr, action_ply + 1);
+                                              -alpha - 1, -alpha, nullptr, action_ply + 1, stop);
                 if (alpha < child_score && child_score < beta)
                     child_score = -negamax_search(board, depth + 1, max_depth,
-                                                  -beta, -child_score, nullptr, action_ply + 1);
+                                                  -beta, -child_score, nullptr, action_ply + 1, stop);
             }
         } else {
             if (!found_move) {
                 child_score = negamax_search(board, depth, max_depth,
-                                             alpha, beta, nullptr, action_ply + 1);
+                                             alpha, beta, nullptr, action_ply + 1, stop);
             } else {
                 child_score = negamax_search(board, depth, max_depth,
-                                             alpha, alpha + 1, nullptr, action_ply + 1);
+                                             alpha, alpha + 1, nullptr, action_ply + 1, stop);
                 if (alpha < child_score && child_score < beta)
                     child_score = negamax_search(board, depth, max_depth,
-                                                 alpha, beta, nullptr, action_ply + 1);
+                                                 alpha, beta, nullptr, action_ply + 1, stop);
             }
         }
 
+        check_cancelled(stop);
         if (!found_move || child_score > best_score) {
             best_score = child_score;
             if (root_move) *root_move = move;
@@ -295,6 +325,7 @@ int Engine::negamax_search(Board& board, int depth, int max_depth,
     }
 
     if (!found_move) best_score = evaluate(board);
+    check_cancelled(stop);
     const BoundType bound = best_score <= original_alpha
         ? BoundType::Upper
         : (best_score >= original_beta ? BoundType::Lower : BoundType::Exact);
@@ -309,7 +340,8 @@ int Engine::negamax_search(Board& board, int depth, int max_depth,
     return best_score;
 }
 
-bool Engine::find_best_move(const Board& position, int requested_depth) {
+bool Engine::find_best_move(const Board& position, int requested_depth,
+                            const std::atomic<bool>* stop) {
     int search_depth = requested_depth < 0 ? default_search_depth : requested_depth;
     if (search_depth < 1) throw std::invalid_argument("search depth must be positive");
 
@@ -319,14 +351,23 @@ bool Engine::find_best_move(const Board& position, int requested_depth) {
     killer_moves.clear();
     history_scores = {};
 
+    if (stop && stop->load(std::memory_order_relaxed)) return false;
     if (!is_turn(position)) return false;
 
-    Board search_board = position;
-    for (int iteration_depth = 1; iteration_depth <= search_depth; ++iteration_depth) {
-        Move iteration_move{};
-        negamax_search(search_board, 0, iteration_depth,
-                       NEGINF, INF, &iteration_move);
-        best_move = iteration_move;
+    try {
+        check_cancelled(stop);
+        Board search_board = position;
+        for (int iteration_depth = 1; iteration_depth <= search_depth; ++iteration_depth) {
+            check_cancelled(stop);
+            Move iteration_move{};
+            negamax_search(search_board, 0, iteration_depth,
+                           NEGINF, INF, &iteration_move, 0, stop);
+            check_cancelled(stop);
+            best_move = iteration_move;
+        }
+    } catch (const SearchCancelled&) {
+        best_move = Move{};
+        return false;
     }
     return best_move.old_x != -1;
 }

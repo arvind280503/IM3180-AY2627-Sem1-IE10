@@ -5,6 +5,8 @@
 
 #include <iostream>
 #include <algorithm>
+#include <atomic>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -95,6 +97,12 @@ struct BoardTestAccess {
 };
 
 struct EngineTestAccess {
+    static auto root_entry(const Engine& engine, const Board& board) {
+        const auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        return std::array<std::uint64_t, 5>{entry.key, static_cast<std::uint64_t>(entry.score),
+            entry.depth, entry.bound, entry.best_move};
+    }
+
     static int search_score(Engine& engine, Board& board, int target,
                             int alpha, int beta, Move* root_move = nullptr) {
         return engine.negamax_search(board, 0, target, alpha, beta, root_move);
@@ -207,6 +215,16 @@ struct EngineTestAccess {
         return engine.negamax_search(board, 1, 1, alpha, beta, nullptr);
     }
 
+    static int cancellable_horizon_score(Engine& engine, Board& board,
+                                         const std::atomic<bool>* stop) {
+        return engine.negamax_search(board, 1, 1, NEGINF, INF, nullptr, 0, stop);
+    }
+
+    static int cancellable_quiescence_score(Engine& engine, Board& board,
+                                            const std::atomic<bool>* stop) {
+        return engine.quiescence_search(board, NEGINF, INF, 0, stop);
+    }
+
     static void seed_root_lower(Engine& engine, const Board& board, const Move& witness) {
         auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
         entry.key = board.get_hash();
@@ -268,6 +286,292 @@ public:
 };
 
 bool same_board(const Board& left, const Board& right);
+
+void test_pre_cancelled_search_does_no_work_or_tt_writes() {
+    class CountingEvaluator final : public Evaluator {
+        int& calls;
+    public:
+        explicit CountingEvaluator(int& calls) : calls(calls) {}
+        int evaluate(const Board&) const override { ++calls; return 0; }
+    };
+    Board board;
+    require(board.make_move(1, 0, 2, 0), "pre-cancellation history fixture failed");
+    const Board before = board;
+    int calls = 0;
+    Engine engine(1, 1, std::make_unique<CountingEvaluator>(calls));
+    std::atomic<bool> stop{true};
+    for (bool warm : {false, true}) {
+        if (warm) {
+            require(engine.find_best_move(board, 1), "pre-cancellation warmup found no move");
+            require(engine.get_best_move().old_x != -1, "warmup failed to publish a move");
+        }
+        const auto table_before = EngineTestAccess::tt_snapshot(engine);
+        const int calls_before = calls;
+        require(!engine.find_best_move(board, 1, &stop),
+                "pre-cancelled search must return false");
+        require(calls == calls_before && engine.get_search_nodes() == 0 &&
+                    engine.get_closed_window_nodes() == 0,
+                "pre-cancelled search performed evaluator or node work");
+        require(engine.get_best_move() == Move{}, "pre-cancelled search retained a stale move");
+        require(EngineTestAccess::tt_matches_snapshot(engine, table_before),
+                "pre-cancelled cold/warm search changed the TT");
+        require(same_board(board, before) && board.export_fen() == before.export_fen() &&
+                    BoardTestAccess::undo_size(board) == 1,
+                "pre-cancelled search changed the input board or undo history");
+    }
+    Board rolled = board, expected = before;
+    rolled.rollback_move();
+    expected.rollback_move();
+    require(same_board(rolled, expected) && rolled.export_fen() == expected.export_fen(),
+            "pre-cancelled search damaged existing undo contents");
+}
+
+class CallbackEvaluator final : public Evaluator {
+    std::function<int(const Board&)> callback;
+public:
+    explicit CallbackEvaluator(std::function<int(const Board&)> callback)
+        : callback(std::move(callback)) {}
+    int evaluate(const Board& board) const override { return callback(board); }
+};
+
+void test_main_search_cancellation_stops_before_node_publication_and_recovers() {
+    for (int actions : {1, 2}) {
+        for (int cancel_at : {1, 5}) {
+            Board board;
+            require(board.import_fen("7k/6p1/8/8/3N4/8/8/K7 w - " +
+                        std::to_string(actions) + " 17 42"), "mid-search fixture import failed");
+            const auto imported = board.export_fen();
+            require(board.make_move(board.legal_moves().front()), "mid-search history action failed");
+            const Board before = board;
+            const auto history_size = BoardTestAccess::undo_size(board);
+            const int root_actions = board.get_moves_left();
+            std::atomic<bool> stop{false};
+            int calls = 0;
+            bool enabled = true;
+            bool saw_same_turn_actions = false;
+            std::function<bool()> table_unchanged;
+            Engine* pointer = nullptr;
+            Engine engine(board.get_current_turn(), 1, std::make_unique<CallbackEvaluator>(
+                [&](const Board& leaf) {
+                    ++calls;
+                    if (enabled && calls == cancel_at) {
+                        saw_same_turn_actions = BoardTestAccess::undo_size(leaf) >= history_size + 2;
+                        const auto snapshot = EngineTestAccess::tt_snapshot(*pointer);
+                        table_unchanged = [&, snapshot] {
+                            return EngineTestAccess::tt_matches_snapshot(engine, snapshot);
+                        };
+                        stop.store(true, std::memory_order_relaxed);
+                    }
+                    return 0;
+                }));
+            pointer = &engine;
+            require(!engine.find_best_move(board, 1, &stop),
+                    "mid-search cancellation must return false");
+            require(calls == cancel_at && engine.get_best_move() == Move{},
+                    "cancelled search evaluated another leaf or published an unfinished move");
+            require(table_unchanged && table_unchanged(),
+                    "an interrupted node published a TT bound after cancellation");
+            if (root_actions == 2)
+                require(saw_same_turn_actions, "cancellation fixture missed two same-turn actions");
+            require(same_board(board, before) && board.export_fen() == before.export_fen() &&
+                        BoardTestAccess::undo_size(board) == history_size,
+                    "mid-search cancellation mutated input FEN/hash/undo");
+            Board rolled = board, expected = before;
+            rolled.rollback_move();
+            expected.rollback_move();
+            require(same_board(rolled, expected) && rolled.export_fen() == imported,
+                    "mid-search cancellation damaged existing undo contents");
+            enabled = false;
+            stop.store(false, std::memory_order_relaxed);
+            Engine reference(board.get_current_turn(), 1, std::make_unique<FixedEvaluator>(0));
+            require(engine.find_best_move(board, 1, &stop) && reference.find_best_move(board, 1),
+                    "the same Engine failed recovery after cancellation");
+            require(engine.get_best_move() == reference.get_best_move() &&
+                        EngineTestAccess::root_entry(engine, board) ==
+                            EngineTestAccess::root_entry(reference, board),
+                    "cancelled Engine recovery differs from a fresh equivalent evaluator");
+        }
+    }
+}
+
+void test_quiescence_cancellation_at_stand_pat_and_recursive_capture() {
+    for (int cancel_at : {1, 2}) {
+        Board board;
+        require(board.import_fen("7k/8/8/8/R3r2r/8/8/K7 w - 2 17 42"),
+                "quiescence-cancellation fixture import failed");
+        const Board before = board;
+        std::atomic<bool> stop{false};
+        int calls = 0;
+        std::size_t cancelled_history = 0;
+        Engine engine(0, 1, std::make_unique<CallbackEvaluator>([&](const Board& leaf) {
+            if (++calls == cancel_at) {
+                cancelled_history = BoardTestAccess::undo_size(leaf);
+                stop.store(true, std::memory_order_relaxed);
+            }
+            int material = 0;
+            for (int row = 0; row < 8; ++row)
+                for (int column = 0; column < 8; ++column)
+                    if (std::abs(leaf.get_piece(row, column)) == 4)
+                        material += leaf.get_piece(row, column) > 0 ? 500 : -500;
+            return leaf.get_current_turn() == 0 ? material : -material;
+        }));
+        const auto table_before = EngineTestAccess::tt_snapshot(engine);
+        Board isolated = board;
+        bool interrupted = false;
+        try { EngineTestAccess::cancellable_horizon_score(engine, isolated, &stop); }
+        catch (...) { interrupted = true; }
+        require(interrupted && stop.load() && calls == cancel_at,
+                "quiescence failed to stop at stand-pat/recursive evaluator return");
+        require(cancelled_history == static_cast<std::size_t>(cancel_at - 1),
+                "quiescence cancellation missed its intended capture-chain checkpoint");
+        require(EngineTestAccess::tt_matches_snapshot(engine, table_before),
+                "cancelled quiescence changed the normal TT");
+        require(same_board(board, before) && board.export_fen() == before.export_fen(),
+                "cancelled quiescence changed the authoritative input");
+    }
+}
+
+void test_cancelled_deeper_iteration_keeps_completed_root_bound_not_best_move() {
+    Board board;
+    require(board.import_fen("7k/6p1/8/8/3N4/8/8/K7 w - 2 17 42"),
+            "iteration-cancellation fixture import failed");
+    std::atomic<bool> stop{false};
+    Engine* pointer = nullptr;
+    std::array<std::uint64_t, 5> completed{};
+    int calls_after_cancel = 0;
+    Engine engine(0, 2, std::make_unique<CallbackEvaluator>([&](const Board& leaf) {
+        if (stop.load(std::memory_order_relaxed)) ++calls_after_cancel;
+        if (!stop.load(std::memory_order_relaxed) && BoardTestAccess::searched_turns(leaf, 0) == 2) {
+            completed = EngineTestAccess::root_entry(*pointer, board);
+            stop.store(true, std::memory_order_relaxed);
+        }
+        return 0;
+    }));
+    pointer = &engine;
+    require(!engine.find_best_move(board, 2, &stop),
+            "cancelled deeper iteration must return false, not its completed shallow move");
+    require(stop.load() && completed[0] == board.get_hash() && completed[2] == 1 &&
+                completed[4] != 0 && calls_after_cancel == 0,
+            "iteration cancellation did not occur after a completed depth-one result");
+    require(EngineTestAccess::root_entry(engine, board) == completed,
+            "cancelled deeper iteration replaced the completed root TT bound");
+    require(engine.get_best_move() == Move{}, "cancelled deeper iteration exposed a stale best move");
+}
+
+void test_cancellation_on_king_capture_and_no_move_evaluator_return() {
+    for (int fixture : {0, 1, 2}) {
+        const bool terminal = fixture == 1;
+        Board board;
+        BoardTestAccess::empty(board, 0, 2, 0);
+        if (terminal) {
+            BoardTestAccess::set_piece(board, 0, 0, 6);
+            BoardTestAccess::set_piece(board, 3, 0, 4);
+            BoardTestAccess::set_piece(board, 3, 4, -6);
+        }
+        if (fixture == 2) {
+            BoardTestAccess::set_piece(board, 3, 0, 1);
+            BoardTestAccess::set_piece(board, 6, 7, -1);
+            require(board.legal_moves().size() == 1,
+                    "last-child cancellation fixture must have exactly one legal action");
+        }
+        const Board before = board;
+        std::atomic<bool> stop{false};
+        int calls = 0;
+        Engine engine(0, 1, std::make_unique<CallbackEvaluator>([&](const Board& leaf) {
+            ++calls;
+            require(leaf.has_game_ended() == terminal,
+                    "king-capture/no-move cancellation reached the wrong evaluator branch");
+            stop.store(true, std::memory_order_relaxed);
+            return 123;
+        }));
+        const auto table_before = EngineTestAccess::tt_snapshot(engine);
+        require(!engine.find_best_move(board, 1, &stop) && calls == 1 &&
+                    engine.get_best_move() == Move{},
+                "last-child/no-move cancellation published a result or continued evaluating");
+        require(EngineTestAccess::tt_matches_snapshot(engine, table_before),
+                "last-child/no-move cancellation published an incomplete root bound");
+        require(same_board(board, before) && board.export_fen() == before.export_fen(),
+                "last-child/no-move cancellation changed the caller's board");
+    }
+}
+
+void test_quiescence_king_capture_and_terminal_entry_observe_cancellation() {
+    for (bool terminal_entry : {false, true}) {
+        Board board;
+        require(board.import_fen("8/8/8/8/R3k3/8/8/K7 w - 2 17 42"),
+                "quiescence terminal-cancellation fixture import failed");
+        if (terminal_entry)
+            require(board.make_move(3, 0, 3, 4), "terminal entry fixture capture failed");
+        std::atomic<bool> stop{false};
+        int calls = 0;
+        bool saw_terminal = false;
+        Engine engine(board.get_current_turn(), 1,
+            std::make_unique<CallbackEvaluator>([&](const Board& leaf) {
+                ++calls;
+                if (leaf.has_game_ended()) {
+                    saw_terminal = true;
+                    stop.store(true, std::memory_order_relaxed);
+                }
+                return 0;
+            }));
+        Board isolated = board;
+        bool interrupted = false;
+        try { EngineTestAccess::cancellable_quiescence_score(engine, isolated, &stop); }
+        catch (...) { interrupted = true; }
+        require(interrupted && saw_terminal && calls == (terminal_entry ? 1 : 2),
+                "quiescence king-capture/terminal entry returned a cancelled evaluator score");
+        require(EngineTestAccess::tt_is_empty(engine), "terminal quiescence wrote to the TT");
+    }
+}
+
+void test_evaluator_exceptions_are_not_converted_to_cancellation() {
+    struct EvaluatorFailure { int marker; };
+    for (bool request_stop : {false, true}) {
+        Board board;
+        const Board before = board;
+        std::atomic<bool> stop{false};
+        Engine engine(0, 1, std::make_unique<CallbackEvaluator>([&](const Board&) -> int {
+            stop.store(request_stop, std::memory_order_relaxed);
+            throw EvaluatorFailure{3180};
+        }));
+        bool propagated = false;
+        try { engine.find_best_move(board, 1, &stop); }
+        catch (const EvaluatorFailure& failure) { propagated = failure.marker == 3180; }
+        require(propagated, "evaluator exception was swallowed or changed into cancellation");
+        require(same_board(board, before) && board.export_fen() == before.export_fen(),
+                "throwing evaluator changed the caller's position");
+    }
+}
+
+void test_false_stop_token_matches_omitted_token_cold_and_warm() {
+    for (int evaluator_kind : {0, 1, 2}) {
+        auto make_evaluator = [=]() -> std::unique_ptr<Evaluator> {
+            if (evaluator_kind == 1) return std::make_unique<NewEvaluator>();
+            if (evaluator_kind == 2) return std::make_unique<SecondEvaluator>();
+            return std::make_unique<StandardEvaluator>();
+        };
+        for (int actions : {1, 2}) {
+            Board board;
+            require(board.import_fen("7k/6p1/8/8/3N4/8/8/K7 w - " +
+                        std::to_string(actions) + " 17 42"), "false-token fixture import failed");
+            const Board before = board;
+            Engine omitted(0, 2, make_evaluator()), disabled(0, 2, make_evaluator());
+            std::atomic<bool> stop{false};
+            for (int repeat = 0; repeat < 2; ++repeat) {
+                require(omitted.find_best_move(board, 2) && disabled.find_best_move(board, 2, &stop),
+                        "omitted/disabled-token search found no move");
+                require(omitted.get_best_move() == disabled.get_best_move() &&
+                            omitted.get_search_nodes() == disabled.get_search_nodes() &&
+                            omitted.get_closed_window_nodes() == disabled.get_closed_window_nodes() &&
+                            EngineTestAccess::root_entry(omitted, board) ==
+                                EngineTestAccess::root_entry(disabled, board),
+                        "false stop token changed move, score, bound, depth, or node traversal");
+                require(same_board(board, before) && board.export_fen() == before.export_fen(),
+                        "omitted/disabled-token search changed the input");
+            }
+        }
+    }
+}
 
 class RootMoveRecordingEvaluator final : public Evaluator {
     std::vector<Move>& moves;
@@ -2567,6 +2871,14 @@ void test_colliding_children_cannot_corrupt_the_root_tt_move() {
 
 int main() {
     try {
+        test_pre_cancelled_search_does_no_work_or_tt_writes();
+        test_main_search_cancellation_stops_before_node_publication_and_recovers();
+        test_quiescence_cancellation_at_stand_pat_and_recursive_capture();
+        test_cancelled_deeper_iteration_keeps_completed_root_bound_not_best_move();
+        test_cancellation_on_king_capture_and_no_move_evaluator_return();
+        test_quiescence_king_capture_and_terminal_entry_observe_cancellation();
+        test_evaluator_exceptions_are_not_converted_to_cancellation();
+        test_false_stop_token_matches_omitted_token_cold_and_warm();
         test_fen_initial_export();
         test_fen_import_replaces_position_at_a_new_root();
         test_fen_rejects_malformed_input_transactionally();

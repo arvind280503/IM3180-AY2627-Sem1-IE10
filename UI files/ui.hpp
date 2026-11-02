@@ -10,6 +10,9 @@
 #include <optional>
 #include <functional>
 #include <future>
+#include <atomic>
+#include <memory>
+#include <cstdint>
 
 struct MoveHistoryEntry {
     int piece;
@@ -47,6 +50,7 @@ public:
     explicit ChessUI(int engineSide = 1, int searchDepth = Engine::kDefaultSearchDepth,
                      std::unique_ptr<Evaluator> whiteEvaluator = nullptr,
                      std::unique_ptr<Evaluator> blackEvaluator = nullptr);
+    ~ChessUI();
     void run();
 
     void setAuthHandler(AuthHandler handler) { authHandler = std::move(handler); }
@@ -71,9 +75,11 @@ private:
         bool found;
         Move move;
     };
-    // Closing the window does not cancel search; this future joins before the Engines die.
     std::future<SearchResult> searchFuture;
-    bool searchInvalidated = false;
+    std::shared_ptr<std::atomic<bool>> searchStop;
+    std::uint64_t positionGeneration = 0;
+    std::uint64_t searchGeneration = 0;
+    Hash searchRootHash = 0;
     int engineSide = 0;
     sf::RenderWindow window;
 
@@ -226,6 +232,7 @@ private:
     void loadPieceTextures();
     void handleEvents();
     void updateEngine();
+    void invalidateSearch();
     bool applyMove(const Move& move);
     bool engineTurn() const;
     void updateResponsiveView(unsigned int width, unsigned int height);

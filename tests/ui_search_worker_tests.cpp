@@ -74,6 +74,15 @@ struct ReleaseOnExit {
     ~ReleaseOnExit() { gate->release(); }
 };
 
+int fullSearchEvaluations(const Board& board) {
+    auto gate = std::make_shared<SearchGate>();
+    gate->release();
+    Engine engine(board.get_current_turn(), 1, std::make_unique<GatedEvaluator>(gate));
+    require(engine.find_best_move(board), "full-search counting control found no move");
+    require(gate->evaluations > 10, "full-search control was too small to distinguish cancellation");
+    return gate->evaluations;
+}
+
 struct ChessUITestAccess {
     static void start(ChessUI& ui) {
         ui.window.setVisible(false);
@@ -87,6 +96,12 @@ struct ChessUITestAccess {
     static std::size_t moves(const ChessUI& ui) { return ui.historyTree.size(); }
     static bool stalled(const ChessUI& ui) { return ui.engineStalled; }
     static bool failed(const ChessUI& ui) { return ui.engineSearchFailed; }
+    static void syntheticFailure(ChessUI& ui) { ui.engineStalled = ui.engineSearchFailed = true; }
+    static bool apply(ChessUI& ui, const Move& move) { return ui.applyMove(move); }
+    static std::uint64_t generation(const ChessUI& ui) { return ui.positionGeneration; }
+    static bool stopRequested(const ChessUI& ui) {
+        return ui.searchStop && ui.searchStop->load(std::memory_order_relaxed);
+    }
     static bool pending(const ChessUI& ui) { return ui.searchFuture.valid(); }
     static bool ready(ChessUI& ui) {
         return ui.searchFuture.valid() && ui.searchFuture.wait_for(0s) == std::future_status::ready;
@@ -122,6 +137,11 @@ struct ChessUITestAccess {
         return ui.historyTree.at(node).move.boardAfterMove.export_fen();
     }
     static Board board(const ChessUI& ui) { return ui.game; }
+    // Synthetic missing-invalidation mutation exercises the root-hash safety net.
+    static void importWithoutInvalidation(ChessUI& ui) {
+        require(ui.game.import_fen("3k4/8/8/8/8/8/8/3K4 w - 2 0 1"),
+                "hash-only mutation fixture import failed");
+    }
     static bool animating(const ChessUI& ui) { return ui.engineMoveAnimating; }
     static void noLegalMoves(ChessUI& ui) {
         require(ui.game.import_fen("PPPPPPPk/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP/KPPPPPPP w - 1 0 1"),
@@ -176,6 +196,67 @@ void consumeResultAndSlide(ChessUI& ui) {
             ChessUITestAccess::position(ui) != before, "engine slide did not apply exactly one move");
 }
 
+void test_hash_only_mutation_cancels_and_discards_worker() {
+    auto gate = std::make_shared<SearchGate>();
+    ChessUI ui(0, 1, std::make_unique<GatedEvaluator>(gate));
+    ReleaseOnExit release{gate};
+    ChessUITestAccess::start(ui);
+    std::this_thread::sleep_for(550ms);
+    ChessUITestAccess::update(ui);
+    require(gate->waitForEntry(), "hash-only search never reached evaluator");
+    ChessUITestAccess::importWithoutInvalidation(ui);
+    const auto selected = ChessUITestAccess::position(ui);
+    ChessUITestAccess::update(ui);
+    gate->release();
+    waitForResult(ui);
+    ChessUITestAccess::update(ui);
+    require(!ChessUITestAccess::pending(ui) && !ChessUITestAccess::animating(ui) &&
+            !ChessUITestAccess::stalled(ui) && !ChessUITestAccess::failed(ui) &&
+            ChessUITestAccess::position(ui) == selected && ChessUITestAccess::moves(ui) == 0,
+            "hash-only mutation consumed an obsolete result or changed error state");
+    std::lock_guard<std::mutex> lock(gate->mutex);
+    require(gate->evaluations == 1 && !gate->timedOut,
+            "hash-only mutation did not promptly cancel real search");
+}
+
+void test_successful_apply_immediately_invalidates_error_state() {
+    ChessUI ui;
+    ChessUITestAccess::start(ui);
+    // Synthetic: UI input cannot apply an engine move after a failed search.
+    ChessUITestAccess::syntheticFailure(ui);
+    const auto generation = ChessUITestAccess::generation(ui);
+    require(!ChessUITestAccess::apply(ui, Move{-1, -1, -1, -1}) &&
+            ChessUITestAccess::stalled(ui) && ChessUITestAccess::failed(ui) &&
+            ChessUITestAccess::generation(ui) == generation,
+            "rejected move invalidated error state or position generation");
+    require(ChessUITestAccess::apply(ui, ChessUITestAccess::board(ui).legal_moves().front()),
+            "apply error reset fixture rejected a legal move");
+    require(!ChessUITestAccess::stalled(ui) && !ChessUITestAccess::failed(ui) &&
+            ChessUITestAccess::generation(ui) == generation + 1,
+            "successful move did not immediately invalidate both errors and generation");
+}
+
+void test_destruction_without_close_cancels_before_joining() {
+    auto gate = std::make_shared<SearchGate>();
+    auto ui = std::make_unique<ChessUI>(0, 1, std::make_unique<GatedEvaluator>(gate));
+    ReleaseOnExit release{gate};
+    ChessUITestAccess::start(*ui);
+    const int fullEvaluations = fullSearchEvaluations(ChessUITestAccess::board(*ui));
+    std::this_thread::sleep_for(550ms);
+    ChessUITestAccess::update(*ui);
+    require(gate->waitForEntry(), "destructor fixture search never reached evaluator");
+    std::thread releaser([gate] { std::this_thread::sleep_for(150ms); gate->release(); });
+    const auto start = std::chrono::steady_clock::now();
+    ui.reset();
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    releaser.join();
+    require(elapsed >= 100ms && elapsed < 1s, "destructor failed to join promptly after evaluator returned");
+    require(gate->evaluations == 1 && gate->evaluatorDestroyed && !gate->destroyedBeforeRelease && !gate->timedOut,
+            "destructor did not cancel before joining and destroying the evaluator");
+    require(gate->evaluations * 10 < fullEvaluations, "destruction did not save most search evaluations");
+    std::cout << "destructor_evaluations=" << gate->evaluations << " full=" << fullEvaluations << '\n';
+}
+
 void test_search_launch_does_not_block_ui() {
     auto gate = std::make_shared<SearchGate>();
     ChessUI ui(1, 1, std::make_unique<GatedEvaluator>(gate));
@@ -215,12 +296,16 @@ void test_restart_same_position_discards_old_result() {
     ReleaseOnExit release{gate};
     ChessUITestAccess::start(ui);
     const auto original = ChessUITestAccess::position(ui);
+    const auto generation = ChessUITestAccess::generation(ui);
+    const int fullEvaluations = fullSearchEvaluations(ChessUITestAccess::board(ui));
     std::this_thread::sleep_for(550ms);
     ChessUITestAccess::update(ui);
     require(gate->waitForEntry(), "restart fixture search never started");
     const auto start = std::chrono::steady_clock::now();
     ChessUITestAccess::start(ui);
     ChessUITestAccess::update(ui);
+    require(ChessUITestAccess::generation(ui) == generation + 1,
+            "same-board restart did not advance the position generation");
     require(std::chrono::steady_clock::now() - start < 400ms, "restart waited for active search");
     std::this_thread::sleep_for(550ms);
     ChessUITestAccess::update(ui);
@@ -230,7 +315,15 @@ void test_restart_same_position_discards_old_result() {
     }
     gate->release();
     waitForResult(ui);
+    {
+        std::lock_guard<std::mutex> lock(gate->mutex);
+        require(gate->evaluations == 1, "restart did not cancel real search after evaluator returned");
+        require(gate->evaluations * 10 < fullEvaluations, "restart did not save most search evaluations");
+        std::cout << "restart_evaluations=" << gate->evaluations << " full=" << fullEvaluations << '\n';
+    }
     ChessUITestAccess::update(ui);
+    require(!ChessUITestAccess::stalled(ui) && !ChessUITestAccess::failed(ui),
+            "cancelled search marked the restarted game as failed or stalled");
     require(ChessUITestAccess::moves(ui) == 0 && ChessUITestAccess::position(ui) == original,
             "restart to the same position consumed the old search result");
     ChessUITestAccess::update(ui);
@@ -248,6 +341,7 @@ void test_history_navigation_discards_old_result() {
         ReleaseOnExit release{gate};
         ChessUITestAccess::start(ui);
         ChessUITestAccess::seedHistory(ui);
+        const int fullEvaluations = fullSearchEvaluations(ChessUITestAccess::board(ui));
         std::this_thread::sleep_for(550ms);
         ChessUITestAccess::update(ui);
         require(gate->waitForEntry(), "navigation fixture search never started");
@@ -266,7 +360,15 @@ void test_history_navigation_discards_old_result() {
         }
         gate->release();
         waitForResult(ui);
+        {
+            std::lock_guard<std::mutex> lock(gate->mutex);
+            require(gate->evaluations == 1, "history selection did not cancel real search after evaluator returned");
+            require(gate->evaluations * 10 < fullEvaluations, "history selection did not save most search evaluations");
+            std::cout << "history_evaluations=" << gate->evaluations << " full=" << fullEvaluations << '\n';
+        }
         ChessUITestAccess::update(ui);
+        require(!ChessUITestAccess::stalled(ui) && !ChessUITestAccess::failed(ui),
+                "cancelled history search changed error flags");
         require(ChessUITestAccess::moves(ui) == 4 && ChessUITestAccess::position(ui) == selected &&
                 !ChessUITestAccess::animating(ui) && !ChessUITestAccess::pending(ui),
                 "history navigation consumed the invalidated search result");
@@ -335,6 +437,8 @@ void test_worker_exception_is_handled_on_ui_thread() {
     require(!ChessUITestAccess::pending(ui), "failed search retried every frame");
     gate->throwOnEvaluation = false;
     ChessUITestAccess::start(ui);
+    require(!ChessUITestAccess::stalled(ui) && !ChessUITestAccess::failed(ui),
+            "restart did not immediately clear both search error flags");
     std::this_thread::sleep_for(550ms);
     ChessUITestAccess::update(ui);
     consumeResultAndSlide(ui);
@@ -489,28 +593,58 @@ void test_false_search_stops_without_applying_a_move() {
 }
 
 void test_stale_exception_is_discarded_and_restart_recovers() {
-    auto gate = std::make_shared<SearchGate>();
-    gate->throwOnEvaluation = true;
-    ChessUI ui(1, 1, std::make_unique<GatedEvaluator>(gate));
-    ReleaseOnExit release{gate};
-    ChessUITestAccess::start(ui);
-    std::this_thread::sleep_for(550ms);
-    ChessUITestAccess::update(ui);
-    require(gate->waitForEntry(), "stale-exception search never started");
-    ChessUITestAccess::start(ui);
-    gate->release();
-    waitForResult(ui);
-    ChessUITestAccess::update(ui);
-    require(!ChessUITestAccess::stalled(ui) && !ChessUITestAccess::pending(ui) && ChessUITestAccess::moves(ui) == 0,
-            "stale exception stopped the restarted game");
-    gate->throwOnEvaluation = false;
-    std::this_thread::sleep_for(550ms);
-    ChessUITestAccess::update(ui);
-    consumeResultAndSlide(ui);
-    require(ChessUITestAccess::moves(ui) == 1 && !ChessUITestAccess::stalled(ui), "restart did not recover after stale exception");
+    for (bool alreadyReady : {false, true}) {
+        auto gate = std::make_shared<SearchGate>();
+        gate->throwOnEvaluation = true;
+        ChessUI ui(1, 1, std::make_unique<GatedEvaluator>(gate));
+        ReleaseOnExit release{gate};
+        ChessUITestAccess::start(ui);
+        std::this_thread::sleep_for(550ms);
+        ChessUITestAccess::update(ui);
+        require(gate->waitForEntry(), "stale-exception search never started");
+        if (alreadyReady) {
+            gate->release();
+            waitForResult(ui);
+        }
+        ChessUITestAccess::start(ui);
+        gate->release();
+        waitForResult(ui);
+        ChessUITestAccess::update(ui);
+        require(!ChessUITestAccess::stalled(ui) && !ChessUITestAccess::failed(ui) &&
+                !ChessUITestAccess::pending(ui) && ChessUITestAccess::moves(ui) == 0,
+                "stale exception stopped the restarted game");
+        gate->throwOnEvaluation = false;
+        std::this_thread::sleep_for(550ms);
+        ChessUITestAccess::update(ui);
+        consumeResultAndSlide(ui);
+        require(ChessUITestAccess::moves(ui) == 1 && !ChessUITestAccess::stalled(ui),
+                "restart did not recover after stale exception");
+    }
 }
 
 #ifdef _WIN32
+void test_history_selection_immediately_clears_failed_search() {
+    auto gate = std::make_shared<SearchGate>();
+    gate->throwOnEvaluation = true;
+    gate->release();
+    ChessUI ui(0, 1, std::make_unique<GatedEvaluator>(gate));
+    ChessUITestAccess::start(ui);
+    ChessUITestAccess::seedHistory(ui);
+    const auto selected = ChessUITestAccess::position(ui);
+    std::this_thread::sleep_for(550ms);
+    ChessUITestAccess::update(ui);
+    waitForResult(ui);
+    ChessUITestAccess::update(ui);
+    require(ChessUITestAccess::stalled(ui) && ChessUITestAccess::failed(ui),
+            "history recovery fixture did not handle an evaluator exception");
+    const auto generation = ChessUITestAccess::generation(ui);
+    ChessUITestAccess::navigate(ui, 3);
+    require(!ChessUITestAccess::stalled(ui) && !ChessUITestAccess::failed(ui) &&
+            ChessUITestAccess::generation(ui) == generation + 1 &&
+            ChessUITestAccess::position(ui) == selected && !ChessUITestAccess::pending(ui),
+            "same-board history selection did not immediately clear both failure flags");
+}
+
 void test_settings_holds_ready_result_until_game_resumes() {
     auto gate = std::make_shared<SearchGate>();
     ChessUI ui(1, 1, std::make_unique<GatedEvaluator>(gate));
@@ -573,6 +707,7 @@ void test_close_returns_but_destruction_joins_worker() {
         auto ui = std::make_unique<ChessUI>(1, 1, std::make_unique<GatedEvaluator>(gate));
         ReleaseOnExit release{gate};
         ChessUITestAccess::start(*ui);
+        const int fullEvaluations = fullSearchEvaluations(ChessUITestAccess::board(*ui));
         std::this_thread::sleep_for(550ms);
         ChessUITestAccess::update(*ui);
         require(gate->waitForEntry(), "shutdown search never started");
@@ -580,6 +715,7 @@ void test_close_returns_but_destruction_joins_worker() {
         ChessUITestAccess::close(*ui);
         require(!ChessUITestAccess::open(*ui) && std::chrono::steady_clock::now() - closeStart < 400ms,
                 "window close/run waited for search");
+        require(ChessUITestAccess::stopRequested(*ui), "close event did not request cooperative stop");
         std::thread releaser([gate] { std::this_thread::sleep_for(150ms); gate->release(); });
         const auto destroyStart = std::chrono::steady_clock::now();
         ui.reset();
@@ -588,6 +724,9 @@ void test_close_returns_but_destruction_joins_worker() {
         require(elapsed >= 100ms, "UI destruction returned without joining active search");
         require(gate->evaluatorDestroyed && !gate->destroyedBeforeRelease && !gate->timedOut,
                 "engine/evaluator destroyed before worker completed, or watchdog fired");
+        require(gate->evaluations == 1, "closed search continued evaluating after the blocked evaluator returned");
+        require(gate->evaluations * 10 < fullEvaluations, "close did not save most search evaluations");
+        std::cout << "close_evaluations=" << gate->evaluations << " full=" << fullEvaluations << '\n';
         std::cout << "shutdown_join_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << '\n';
     }
 }
@@ -595,6 +734,12 @@ void test_close_returns_but_destruction_joins_worker() {
 
 int main() {
     try {
+        test_destruction_without_close_cancels_before_joining();
+        std::cout << "PASS destruction_without_close_cancels_before_joining\n";
+        test_successful_apply_immediately_invalidates_error_state();
+        std::cout << "PASS successful_apply_immediately_invalidates_error_state (synthetic failed engine input)\n";
+        test_hash_only_mutation_cancels_and_discards_worker();
+        std::cout << "PASS hash_only_mutation_cancels_and_discards_worker (synthetic missing invalidation)\n";
         test_search_launch_does_not_block_ui();
         std::cout << "PASS search_launch_does_not_block_ui\n";
         test_restart_same_position_discards_old_result();
@@ -620,6 +765,8 @@ int main() {
         test_stale_exception_is_discarded_and_restart_recovers();
         std::cout << "PASS stale_exception_is_discarded_and_restart_recovers\n";
 #ifdef _WIN32
+        test_history_selection_immediately_clears_failed_search();
+        std::cout << "PASS history_selection_immediately_clears_failed_search\n";
         test_settings_holds_ready_result_until_game_resumes();
         std::cout << "PASS settings_holds_ready_result_until_game_resumes\n";
         test_stale_search_does_not_delay_human_animation();
