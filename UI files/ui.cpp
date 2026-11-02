@@ -1,5 +1,6 @@
 #include "ui.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <ctime>
 #include <filesystem>
@@ -50,6 +51,11 @@ engineSearchDepth(searchDepth), startingBoard(game) {
     static_cast<void>(victorySoundBuffer.loadFromFile("assets/sounds/victory.wav"));
 }
 
+ChessUI::~ChessUI() {
+    if (searchStop) searchStop->store(true, std::memory_order_relaxed);
+    if (searchFuture.valid()) searchFuture.wait();
+}
+
 void ChessUI::run() {
     while (window.isOpen()) {
         handleEvents();
@@ -89,6 +95,7 @@ bool ChessUI::applyMove(const Move& requested) {
     }
 
     if (!game.make_move(requested)) return false;
+    invalidateSearch();
     if (promotionMove) pendingPromotion = Move{};
     const int entryPromotionPiece = promotionMove ? (*(game.begin() + toRow))[toCol] : 0;
 
@@ -124,7 +131,6 @@ bool ChessUI::applyMove(const Move& requested) {
     else if (newNodeX + 45.f > historyRight) historyHorizontalScroll += newNodeX + 45.f - historyRight;
     historyHorizontalScroll = std::clamp(historyHorizontalScroll, 0.f, getHistoryHorizontalScrollBar().maxScroll);
 
-    engineStalled = false;
     legalMoves.clear();
     clearSelection();
 
@@ -141,15 +147,11 @@ bool ChessUI::applyMove(const Move& requested) {
 
 bool ChessUI::engineTurn() const {
     if (game.has_game_ended()) return false;
-    if (engineSide == 0) return whiteEngine.is_turn(game);
-    return blackEngine.is_turn(game);
+    return game.get_current_turn() == engineSide;
 }
 
 void ChessUI::updateEngine() {
-    if (currentScreen != Screen::Game)
-        return;
-
-    if (engineMoveAnimating) {
+    if (currentScreen == Screen::Game && engineMoveAnimating) {
         if (engineAnimationClock.getElapsedTime().asSeconds() < engineSlideSeconds)
             return;
 
@@ -161,6 +163,20 @@ void ChessUI::updateEngine() {
         return;
     }
 
+    if (searchFuture.valid()) {
+        const bool obsolete = searchGeneration != positionGeneration ||
+                              searchRootHash != game.get_hash();
+        if (obsolete) searchStop->store(true, std::memory_order_relaxed);
+        if (searchFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            return;
+        if (searchStop->load(std::memory_order_relaxed)) {
+            searchFuture = {};
+            searchStop.reset();
+            return;
+        }
+    }
+
+    if (currentScreen != Screen::Game) return;
     if (game.has_game_ended() || engineStalled || !engineTurn()) return;
 
     if (!engineMoveWaiting) {
@@ -177,13 +193,35 @@ void ChessUI::updateEngine() {
         return;
     }
 
-    Engine& engine = (game.get_current_turn() == 0) ? whiteEngine : blackEngine;
-    if (!engine.find_best_move(game, engineSearchDepth)) {
+    SearchResult result{};
+    try {
+        if (!searchFuture.valid()) {
+            searchStop = std::make_shared<std::atomic<bool>>(false);
+            searchGeneration = positionGeneration;
+            searchRootHash = game.get_hash();
+            Engine& engine = (game.get_current_turn() == 0) ? whiteEngine : blackEngine;
+            searchFuture = std::async(std::launch::async,
+                [snapshot = game, &engine, depth = engineSearchDepth, stop = searchStop] {
+                    const bool found = engine.find_best_move(snapshot, depth, stop.get());
+                    return SearchResult{found, found ? engine.get_best_move() : Move{}};
+                });
+            return;
+        }
+        result = searchFuture.get();
+        searchStop.reset();
+    } catch (...) {
+        searchStop.reset();
+        engineStalled = true;
+        engineSearchFailed = true;
+        return;
+    }
+
+    if (!result.found) {
         engineStalled = true;
         return;
     }
 
-    animatedMove = engine.get_best_move();
+    animatedMove = result.move;
     const int fromRow = animatedMove.old_x;
     const int fromCol = animatedMove.old_y;
     const int toRow = animatedMove.new_x;
@@ -324,7 +362,10 @@ void ChessUI::handleEvents() {
             }
         }
 
-        if (event->is<sf::Event::Closed>()) { window.close(); }
+        if (event->is<sf::Event::Closed>()) {
+            invalidateSearch();
+            window.close();
+        }
 
         if (const auto* mousePressed = event->getIf<sf::Event::MouseButtonPressed>()) {
             if (mousePressed->button == sf::Mouse::Button::Left) {
@@ -720,10 +761,10 @@ void ChessUI::handleEvents() {
                     {
                         playSound(uiClickSoundBuffer);
                         currentHistoryNode = i;
+                        invalidateSearch();
                         game = historyTree[i].move.boardAfterMove;
                         rebuildLinearHistoryFromNode(currentHistoryNode);
 
-                        engineStalled = false;
                         engineMoveWaiting = true;
                         engineMoveClock.restart();
                         clearSelection();
@@ -1662,7 +1703,7 @@ void ChessUI::drawText() {
     std::string turnText = game.get_current_turn() == 0 ? "White" : "Black";
     std::string status = game.has_game_ended() ? "Game ended" :
         turnText + " to move (" + std::to_string(game.get_moves_left()) + " actions left)";
-    if (engineStalled) status = "Engine has no legal move";
+    if (engineStalled) status = engineSearchFailed ? "Engine search failed" : "Engine has no legal move";
     sf::Text turnLabel(font, status, 20);
     turnLabel.setPosition({static_cast<float>(boardX), 35.f});
     window.draw(turnLabel);
@@ -2721,7 +2762,15 @@ void ChessUI::clearSelection() {
     legalMoves.clear();
 }
 
+void ChessUI::invalidateSearch() {
+    if (searchStop) searchStop->store(true, std::memory_order_relaxed);
+    ++positionGeneration;
+    engineStalled = false;
+    engineSearchFailed = false;
+}
+
 void ChessUI::startGame(int engineSide) {
+    invalidateSearch();
     game = Board();
     startingBoard = game;
 
@@ -2750,7 +2799,6 @@ void ChessUI::startGame(int engineSide) {
     draggedRow = -1;
     draggedCol = -1;
 
-    engineStalled = false;
     engineMoveWaiting = true;
     engineMoveClock.restart();
     engineMoveAnimating = false;

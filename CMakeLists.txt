@@ -34,6 +34,7 @@ else()
 endif()
 
 if(CHESS_BUILD_GUI)
+    find_package(Threads REQUIRED)
     include(FetchContent)
 
     # The UI uses both the Graphics and Audio modules.
@@ -53,13 +54,17 @@ if(CHESS_BUILD_GUI)
     set_target_properties(chess PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}"
     )
-    target_link_libraries(chess PRIVATE chess_core chess_local_store SFML::Graphics SFML::Audio)
+    target_link_libraries(chess PRIVATE chess_core chess_local_store SFML::Graphics SFML::Audio Threads::Threads)
     target_compile_definitions(chess PRIVATE CHESS_DATA_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data")
     if(BUILD_TESTING)
         add_executable(ui_account_history_tests tests/ui_account_history_tests.cpp "UI files/ui.cpp")
-        target_link_libraries(ui_account_history_tests PRIVATE chess_core chess_local_store SFML::Graphics SFML::Audio)
+        target_link_libraries(ui_account_history_tests PRIVATE chess_core chess_local_store SFML::Graphics SFML::Audio Threads::Threads)
         add_test(NAME ui_account_history_tests COMMAND ui_account_history_tests "${CMAKE_CURRENT_BINARY_DIR}/ui-account-test-data")
         set_tests_properties(ui_account_history_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        add_executable(ui_search_worker_tests tests/ui_search_worker_tests.cpp "UI files/ui.cpp")
+        target_link_libraries(ui_search_worker_tests PRIVATE chess_core SFML::Graphics SFML::Audio Threads::Threads)
+        add_test(NAME ui_search_worker_tests COMMAND ui_search_worker_tests)
+        set_tests_properties(ui_search_worker_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
     endif()
 endif()
 
