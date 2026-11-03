@@ -1,35 +1,23 @@
 #pragma once
 
-#include "../evaluator.hpp"
-
-#include <array>
-#include <algorithm>
-#include <cmath>
-#include <utility>
-
 class Board;
 
-class NewEvaluator : public Evaluator {
+class NewEvaluator {
 public:
-    // Middlegame / endgame score pair. Nested so it can't clash with the
-    // TaperedScore declared in NewEvaluator.hpp.
+    // A score with a middlegame part (mg) and an endgame part (eg).
     struct Tapered {
-        int mg = 0;
-        int eg = 0;
+        int mg;
+        int eg;
 
-        constexpr Tapered operator+(const Tapered& o) const { return {mg + o.mg, eg + o.eg}; }
-        constexpr Tapered operator-(const Tapered& o) const { return {mg - o.mg, eg - o.eg}; }
-        constexpr Tapered operator*(int k) const { return {mg * k, eg * k}; }
         Tapered& operator+=(const Tapered& o) { mg += o.mg; eg += o.eg; return *this; }
         Tapered& operator-=(const Tapered& o) { mg -= o.mg; eg -= o.eg; return *this; }
+        Tapered operator*(int k) const { return Tapered{mg * k, eg * k}; }
     };
 
-    NewEvaluator() = default;
-    ~NewEvaluator() override = default;
-
-    int evaluate(const Board& board) const override;
+    // Score from the point of view of the side to move (negamax style).
+    int evaluate(const Board& board) const;
 
 private:
-    // Static terms, White's point of view.
+    // Score from White's point of view (positive = good for White).
     Tapered evaluate_position(const Board& board) const;
 };
