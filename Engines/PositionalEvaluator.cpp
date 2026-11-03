@@ -1,9 +1,9 @@
-#include "SecondEvaluator.hpp"
+#include "PositionalEvaluator.hpp"
 #include "../board.hpp"
 
 namespace {
 
-using Tapered = SecondEvaluator::Tapered;
+using Tapered = PositionalEvaluator::Tapered;
 
 constexpr int kWhiteForward = 1;
 
@@ -79,7 +79,7 @@ inline void add_for(Tapered& total, const Tapered& v, bool white) {
 
 } // namespace
 
-int SecondEvaluator::evaluate(const Board& board) const {
+int PositionalEvaluator::evaluate(const Board& board) const {
     // Check terminal game-over conditions (draw or win)
     if (board.has_game_ended()) {
         const int status = board.get_game_status();
@@ -109,7 +109,7 @@ int SecondEvaluator::evaluate(const Board& board) const {
 }
 
 // Detailed position evaluation function
-SecondEvaluator::Tapered SecondEvaluator::evaluate_position(const Board& board) const {
+PositionalEvaluator::Tapered PositionalEvaluator::evaluate_position(const Board& board) const {
     Tapered score{0, 0};
 
     // check whose turn it is, and whether they still have both moves of the turn

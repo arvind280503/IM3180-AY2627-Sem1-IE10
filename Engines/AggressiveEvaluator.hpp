@@ -4,7 +4,7 @@
 
 class Board;
 
-class NewEvaluator : public Evaluator {
+class AggressiveEvaluator : public Evaluator {
 public:
     // A score with a middlegame part (mg) and an endgame part (eg).
     struct Tapered {
@@ -18,7 +18,7 @@ public:
         Tapered operator*(int k) const { return Tapered{mg * k, eg * k}; }
     };
 
-    ~NewEvaluator() override = default;
+    ~AggressiveEvaluator() override = default;
 
     // Score from the point of view of the side to move (negamax style).
     int evaluate(const Board& board) const override;

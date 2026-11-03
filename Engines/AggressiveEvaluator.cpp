@@ -1,4 +1,4 @@
-#include "NewEvaluator.hpp"
+#include "AggressiveEvaluator.hpp"
 #include "../board.hpp"
 
 #include <algorithm>
@@ -7,7 +7,7 @@
 
 namespace {
 
-using Tapered = NewEvaluator::Tapered;
+using Tapered = AggressiveEvaluator::Tapered;
 
 constexpr int kWhiteForward = 1;
 
@@ -167,7 +167,7 @@ int slide(const Board& board, int row, int col, bool white,
 
 } // namespace
 
-int NewEvaluator::evaluate(const Board& board) const {
+int AggressiveEvaluator::evaluate(const Board& board) const {
     if (board.has_game_ended()) {
         const int status = board.get_game_status();
         if (status == 0) return 0;
@@ -193,7 +193,7 @@ int NewEvaluator::evaluate(const Board& board) const {
     return interpolated * (board.get_current_turn() ? -1 : 1);
 }
 
-NewEvaluator::Tapered NewEvaluator::evaluate_position(const Board& board) const {
+AggressiveEvaluator::Tapered AggressiveEvaluator::evaluate_position(const Board& board) const {
     Tapered score{0, 0};
 
     int pawn_count[2][8] = {};

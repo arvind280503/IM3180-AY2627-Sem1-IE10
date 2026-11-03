@@ -9,10 +9,10 @@
 
 class Board;
 
-class SecondEvaluator : public Evaluator {
+class PositionalEvaluator : public Evaluator {
 public:
     // Middlegame / endgame score pair. Nested so it can't clash with the
-    // TaperedScore declared in SecondEvaluator.hpp.
+    // TaperedScore declared in PositionalEvaluator.hpp.
     struct Tapered {
         int mg = 0;
         int eg = 0;
@@ -24,8 +24,8 @@ public:
         Tapered& operator-=(const Tapered& o) { mg -= o.mg; eg -= o.eg; return *this; }
     };
 
-    SecondEvaluator() = default;
-    ~SecondEvaluator() override = default;
+    PositionalEvaluator() = default;
+    ~PositionalEvaluator() override = default;
 
     int evaluate(const Board& board) const override;
 
