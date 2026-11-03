@@ -5,41 +5,60 @@ namespace {
 
 using Tapered = SecondEvaluator::Tapered;
 
-// Row direction White's pawns move in. Your SecondEvaluator treats White as
-// advancing towards higher row numbers (advance_rank = row, pawn_dir = -1),
-// so that is assumed here. Flip to -1 if your board is the other way round.
 constexpr int kWhiteForward = 1;
 
-// Indexed by abs(piece): 0 none, 1 pawn, 2 knight, 3 bishop, 4 rook, 5 queen, 6 king.
+// Base material values
 constexpr std::array<int, 7> kValue = {0, 100, 320, 330, 500, 900, 0};
 
-// Passed-pawn bonus by rank from the pawn's own side.
+// Passed pawn bonuses per advancement rank (middlegame and endgame)
 constexpr std::array<int, 8> kPassedMg = {0, 5, 10, 20, 35, 60, 100, 0};
 constexpr std::array<int, 8> kPassedEg = {0, 10, 20, 40, 70, 120, 200, 0};
 
+// Structure and piece positional terms (middlegame, endgame)
 constexpr Tapered kBishopPair{30, 50};
 constexpr Tapered kDoubledPawn{-10, -20};
 constexpr Tapered kIsolatedPawn{-10, -15};
+constexpr Tapered kConnectedPawn{7, 12};
 constexpr Tapered kRookOpenFile{20, 10};
 constexpr Tapered kRookSemiOpenFile{10, 5};
-constexpr int kKingShieldMg = 10;  // per pawn directly in front of the king
+constexpr int kKingShieldMg = 10;
 
-// Rank counted from the piece's own back rank (0..7).
+// Helper: calculate relative rank advance for White or Black
 inline int advance_rank(int row, bool white) {
     return (white == (kWhiteForward > 0)) ? row : 7 - row;
 }
 
+// Helper: get forward step direction for White (+1) or Black (-1)
 inline int forward_dir(bool white) { return white ? kWhiteForward : -kWhiteForward; }
 
-// 0 on the edge ring .. 3 on the four centre squares.
+// Helper: distance score from board edges (0 on edge, 3 in center)
 inline int centrality(int row, int col) {
-    const int d = std::max(std::abs(2 * row - 7), std::abs(2 * col - 7));  // 1,3,5,7
+    const int d = std::max(std::abs(2 * row - 7), std::abs(2 * col - 7));
     return (7 - d) / 2;
 }
 
+// Helper: map side boolean to array index (0 = White, 1 = Black)
 inline int side_index(bool white) { return white ? 0 : 1; }
 
-// Placement bonus (replaces piece-square tables with a simple centrality rule).
+// true if this pawn is one step from promotion and can promote on its next move
+inline bool can_promote_now(const Board& board, int row, int col, bool white) {
+    // Must be on the rank just before the last one
+    if (advance_rank(row, white) != 6) return false;
+    const int next = row + forward_dir(white);
+    if (next < 0 || next > 7) return false;
+    // Square ahead is empty, so it can simply step forward
+    if (board.get_piece(next, col) == 0) return true;
+    // Or an enemy piece is diagonally ahead, so it can capture and promote
+    for (int dc = -1; dc <= 1; dc += 2) {
+        const int c = col + dc;
+        if (c < 0 || c > 7) continue;
+        const int t = board.get_piece(next, c);
+        if (t != 0 && (t > 0) != white) return true;
+    }
+    return false;
+}
+
+// Piece placement bonus based on rank advancement and centrality
 Tapered placement(int abs_piece, int adv, int cen) {
     switch (abs_piece) {
         case 1: return {5 * adv + 2 * cen, 10 * adv};
@@ -47,26 +66,32 @@ Tapered placement(int abs_piece, int adv, int cen) {
         case 3: return {8 * cen - (adv == 0 ? 8 : 0), 6 * cen};
         case 4: return {(adv == 6 ? 15 : 0) + 2 * cen, adv == 6 ? 10 : 0};
         case 5: return {3 * cen, 5 * cen};
-        case 6: return {-10 * adv, 12 * cen};  // midgame: stay home, endgame: centralise
+        case 6: return {-10 * adv, 12 * cen};
         default: return {0, 0};
     }
 }
 
+// Helper: add score for White or subtract for Black
 inline void add_for(Tapered& total, const Tapered& v, bool white) {
     if (white) total += v;
     else total -= v;
 }
 
-}  // namespace
+} // namespace
 
 int SecondEvaluator::evaluate(const Board& board) const {
+    // Check terminal game-over conditions (draw or win)
     if (board.has_game_ended()) {
-        const int winner_score = board.get_game_status() > 0 ? 999999 : -999999;
+        const int status = board.get_game_status();
+        if (status == 0) return 0;
+        const int winner_score = status > 0 ? 999999 : -999999;
         return winner_score * (board.get_current_turn() ? -1 : 1);
     }
 
+    // Evaluate full board position score (tapered MG/EG)
     const Tapered score = evaluate_position(board);
 
+    // Calculate game phase based on remaining pieces
     int game_phase = 0;
     for (int r = 0; r < 8; ++r) {
         for (int c = 0; c < 8; ++c) {
@@ -78,22 +103,32 @@ int SecondEvaluator::evaluate(const Board& board) const {
     }
     game_phase = std::min(game_phase, 24);
 
+    // Adjusting score with mg and eg
     const int interpolated = (score.mg * game_phase + score.eg * (24 - game_phase)) / 24;
     return interpolated * (board.get_current_turn() ? -1 : 1);
 }
 
+// Detailed position evaluation function
 SecondEvaluator::Tapered SecondEvaluator::evaluate_position(const Board& board) const {
     Tapered score{0, 0};
 
-    // pawn_rows[side][file]: bitmask of rows holding that side's pawns.
-    // pawn_count[side][file]: number of pawns.
+    // check whose turn it is, and whether they still have both moves of the turn
+    const bool white_to_move = !board.get_current_turn();
+    const bool first_move_of_turn = board.get_moves_left() == 2;
+
+    // true if this pawn will promote this turn (side to move, first move, can promote)
+    auto promotes_this_turn = [&](int row, int col, bool white) {
+        return first_move_of_turn && white == white_to_move &&
+               can_promote_now(board, row, col, white);
+    };
+
     int pawn_rows[2][8] = {};
     int pawn_count[2][8] = {};
     int bishops[2] = {0, 0};
     int king_row[2] = {-1, -1};
     int king_col[2] = {-1, -1};
 
-    // Pass 1: material, placement, and collecting structure info.
+    // Pass 1: Material, piece placement, and collecting piece/pawn tracking data
     for (int row = 0; row < 8; ++row) {
         for (int col = 0; col < 8; ++col) {
             const int piece = board.get_piece(row, col);
@@ -103,14 +138,22 @@ SecondEvaluator::Tapered SecondEvaluator::evaluate_position(const Board& board) 
             const int abs_piece = std::abs(piece);
             const int side = side_index(white);
 
-            const int base = kValue[abs_piece];
+            // a promoting pawn is scored as a queen
+            const bool as_queen = abs_piece == 1 && promotes_this_turn(row, col, white);
+            const int eff_piece = as_queen ? 5 : abs_piece;
+
+            // Material & positional placement score
+            const int base = kValue[eff_piece];
             Tapered s{base, base};
-            s += placement(abs_piece, advance_rank(row, white), centrality(row, col));
+            s += placement(eff_piece, advance_rank(row, white), centrality(row, col));
             add_for(score, s, white);
 
+            // Tracking pawns, bishops, and king positions
             if (abs_piece == 1) {
                 pawn_rows[side][col] |= 1 << row;
                 ++pawn_count[side][col];
+                
+
             } else if (abs_piece == 3) {
                 ++bishops[side];
             } else if (abs_piece == 6) {
@@ -120,26 +163,28 @@ SecondEvaluator::Tapered SecondEvaluator::evaluate_position(const Board& board) 
         }
     }
 
-    // Bishop pair.
+    // Bishop pair bonus
     if (bishops[0] >= 2) score += kBishopPair;
     if (bishops[1] >= 2) score -= kBishopPair;
 
-    // Doubled and isolated pawns, per file.
+    // Doubled and isolated pawn penalties
     for (int side = 0; side < 2; ++side) {
         const bool white = side == 0;
         for (int col = 0; col < 8; ++col) {
             const int n = pawn_count[side][col];
             if (n == 0) continue;
 
+            // Doubled pawn penalty
             if (n > 1) add_for(score, kDoubledPawn * (n - 1), white);
 
+            // Isolated pawn penalty
             const bool left = col > 0 && pawn_count[side][col - 1] > 0;
             const bool right = col < 7 && pawn_count[side][col + 1] > 0;
             if (!left && !right) add_for(score, kIsolatedPawn * n, white);
         }
     }
 
-    // Pass 2: passed pawns and rooks on open files.
+    // Pass 2: Passed pawn bonus & rook open/semi-open file bonus
     for (int row = 0; row < 8; ++row) {
         for (int col = 0; col < 8; ++col) {
             const int piece = board.get_piece(row, col);
@@ -150,8 +195,8 @@ SecondEvaluator::Tapered SecondEvaluator::evaluate_position(const Board& board) 
             const int side = side_index(white);
             const int enemy = 1 - side;
 
+            // Passed pawn bonus
             if (abs_piece == 1) {
-                // Rows strictly in front of this pawn.
                 const bool up = forward_dir(white) > 0;
                 const int ahead = up ? ((0xFF << (row + 1)) & 0xFF) : ((1 << row) - 1);
 
@@ -160,20 +205,35 @@ SecondEvaluator::Tapered SecondEvaluator::evaluate_position(const Board& board) 
                     if (fc < 0 || fc > 7) continue;
                     if (pawn_rows[enemy][fc] & ahead) passed = false;
                 }
-                if (passed) {
+                // skip the bonus for a promoting pawn (already counted as a queen)
+                if (passed && !promotes_this_turn(row, col, white)) {
                     const int adv = advance_rank(row, white);
                     add_for(score, Tapered{kPassedMg[adv], kPassedEg[adv]}, white);
                 }
-            } else if (abs_piece == 4) {
+            } 
+            // Rook open and semi-open file bonus
+            else if (abs_piece == 4) {
                 const bool own_pawn = pawn_count[side][col] > 0;
                 const bool enemy_pawn = pawn_count[enemy][col] > 0;
                 if (!own_pawn && !enemy_pawn) add_for(score, kRookOpenFile, white);
                 else if (!own_pawn) add_for(score, kRookSemiOpenFile, white);
             }
+
+            // Bonus for having queen and knights close to enemy king
+            if (abs_piece == 2 || abs_piece == 5) {
+                const int ek_row = king_row[enemy];
+                const int ek_col = king_col[enemy];
+
+                if (ek_row != -1 && ek_col != -1) {
+                    const int dist = std::max(std::abs(row - ek_row), std::abs(col - ek_col));
+                    const int closeness = std::max(0, 5 - dist);
+                    add_for(score, Tapered{closeness * (abs_piece == 5 ? 3 : 2), 0}, white);
+                }
+            }
         }
     }
 
-    // King safety: pawn shield in front of each king (middlegame only).
+    // pawn shield infront of king
     for (int side = 0; side < 2; ++side) {
         if (king_row[side] == -1) continue;
         const bool white = side == 0;
