@@ -39,6 +39,7 @@ public:
         std::string black;
         std::string result;
         std::string date;
+        std::vector<Move> mainline;
     };
 
     using AuthHandler = std::function<bool(
@@ -59,12 +60,10 @@ public:
     void setMatchHistory(std::vector<MatchSummary> matches) {
         matchSummaries = std::move(matches);
         matchHistoryMessage.clear();
-        matchHistoryScroll = 0.f;
     }
     void setMatchHistoryProvider(MatchHistoryProvider provider) {
         matchHistoryProvider = std::move(provider);
         matchHistoryMessage.clear();
-        matchHistoryScroll = 0.f;
     }
 
 private:
@@ -127,6 +126,22 @@ private:
     const float engineMoveDelaySeconds = 0.5f;
     const float engineSlideSeconds = 0.3f;
 
+    const float matchSeconds = 120.f;
+    float moveTimeLeft = 120.f;
+    int clockKeyNode = -2;
+    int clockKeyTurn = -1;
+    int clockKeyMovesLeft = -1;
+    sf::Clock clockTimer;
+    bool timeExpired = false;
+    int timeoutLoser = -1;
+    bool clockStarted = false;
+    void updateClocks();
+    void drawClocks();
+
+    bool historyPreviewHeld = false;
+    bool historyBrowsing = false;
+    bool forceNewBranch = false;
+
     Move pendingPromotion{};
 
     bool showPossibleMoves = true;
@@ -136,6 +151,7 @@ private:
 
     std::vector<HistoryNode> historyTree;
     int currentHistoryNode = -1;
+    int viewingHistoryNode = -1;
     int hoveredHistoryNode = -1;
     float historyHorizontalScroll = 0.f;
     bool historyHorizontalScrollbarDragging = false;
@@ -167,15 +183,26 @@ private:
     std::string matchHistoryMessage;
     MatchHistoryProvider matchHistoryProvider;
     MatchRecorder matchRecorder;
+    int matchHistoryPage = 0;
+    const int matchHistoryRowsPerPage = 7;
+    bool replayActive = false;
+    MatchSummary replayMatch;
+    int replayMoveIndex = -1;
+    Board replayBoard;
+    double evalShown = 0.0;
+    double evalFrom = 0.0;
+    double evalTo = 0.0;
+    bool evalStarted = false;
+    sf::Clock evalClock;
+    const float evalSlideSeconds = 0.7f;
     std::string gameAccountName;
     int gamePlayerSide = -1;
     bool gameRecorded = false;
     std::string matchSaveMessage;
-    float matchHistoryScroll = 0.f;
     sf::View logicalView;
 
     std::vector<std::string> pieceThemeFolders;
-    std::vector<sf::Texture> pieceThemeKings;
+    std::vector<std::vector<sf::Texture>> themePreviewPieces;
 
     int boardTheme = 0;
     std::vector<std::string> boardThemeFolders;
@@ -242,6 +269,13 @@ private:
     void drawAccountScreen();
     void drawProfilePicturePicker();
     void drawMatchHistoryScreen();
+    void drawMatchHistoryPagination();
+    void drawSmallButton(float x, float y, const std::string& label, bool enabled,
+                         sf::Color fill = sf::Color(65, 65, 65));
+    void drawReplayControls();
+    void stepReplay(int delta);
+    void updateEvaluationBar();
+    void drawEvaluationBar();
     void submitAccountForm();
     void openMatchHistory();
     void recordCompletedMatch();
