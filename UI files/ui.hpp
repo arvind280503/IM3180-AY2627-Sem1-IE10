@@ -163,6 +163,7 @@ private:
 
     bool manualBoardFlip = false;
     bool showCoordinates = true;
+    bool showEvaluationBar = true;
     bool soundEffects = true;
     bool accountSignUpMode = false;
     bool accountPasswordField = false;

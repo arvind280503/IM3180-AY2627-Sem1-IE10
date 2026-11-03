@@ -771,6 +771,11 @@ void ChessUI::handleEvents() {
                             continue;
                         }
 
+                        else if (clickedGameplayRow(595.f)) {
+                            playSound(uiClickSoundBuffer);
+                            showEvaluationBar = !showEvaluationBar;
+                        }
+
                     }
 
                     else {
@@ -1103,7 +1108,8 @@ void ChessUI::draw() {
         drawText();
         drawClocks();
         drawMoveHistory();
-        drawEvaluationBar();
+        if (showEvaluationBar)
+            drawEvaluationBar();
         drawEndScreen();
         drawProfileButton();
         window.display();
@@ -1138,7 +1144,8 @@ void ChessUI::draw() {
     drawText();
     drawClocks();
     drawMoveHistory();
-    drawEvaluationBar();
+    if (showEvaluationBar)
+        drawEvaluationBar();
 
     sf::RectangleShape flipButton({74.f, 36.f});
     flipButton.setPosition({topFlipX, 20.f});
@@ -2758,6 +2765,7 @@ void ChessUI::drawGameplaySettings() {
     window.draw(historyState);
 
     drawToggle("Fullscreen (F11)", fullscreen, 530.f);
+    drawToggle("Evaluation bar", showEvaluationBar, 595.f);
 }
 
 void ChessUI::drawDesignSettings() {
