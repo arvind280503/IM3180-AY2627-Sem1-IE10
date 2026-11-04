@@ -2864,10 +2864,10 @@ void test_horizon_quiescence_ignores_and_preserves_populated_tt() {
             "populated-TT horizon test changed its input position");
 }
 
-void test_default_depth_is_three() {
+void test_default_depth_is_four() {
     Engine engine(0);
-    require(engine.get_search_depth() == 3,
-            "default depth should be 3 after GUI-workload benchmarking");
+    require(engine.get_search_depth() == 4,
+            "default depth should be 4");
 }
 
 void test_equal_depth_result_replaces_cached_lower_bound() {
@@ -2990,7 +2990,7 @@ int main() {
         test_normal_search_uses_quiescence_after_a_quiet_horizon_move();
         test_quiescence_consumes_recursive_capture_budget();
         test_horizon_quiescence_ignores_and_preserves_populated_tt();
-        test_default_depth_is_three();
+        test_default_depth_is_four();
         test_equal_depth_result_replaces_cached_lower_bound();
         test_retained_lower_bound_keeps_its_move_witness();
         test_colliding_children_cannot_corrupt_the_root_tt_move();
