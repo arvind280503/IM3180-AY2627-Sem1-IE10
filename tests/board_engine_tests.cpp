@@ -97,8 +97,13 @@ struct BoardTestAccess {
 };
 
 struct EngineTestAccess {
+    static void seed_entry(Engine& engine, const Engine::TranspositionEntry& entry) {
+        // Force fixture overwrites, including shallower entries on a warmed table.
+        engine.store_tt(entry, 255);
+    }
+
     static auto root_entry(const Engine& engine, const Board& board) {
-        const auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        const auto entry = engine.probe_tt(board.get_hash());
         return std::array<std::uint64_t, 5>{entry.key, static_cast<std::uint64_t>(entry.score),
             entry.depth, entry.bound, entry.best_move};
     }
@@ -165,18 +170,18 @@ struct EngineTestAccess {
     }
 
     static void seed_ordering_hint(Engine& engine, const Board& board, const Move& move) {
-        auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
-        entry = {};
+        Engine::TranspositionEntry entry{};
         entry.key = board.get_hash();
         entry.depth = 0;
         entry.best_move = Engine::encode_move(move);
+        seed_entry(engine, entry);
     }
 
     static int quiescence_limit() { return Engine::kMaxQuiescencePly; }
 
     static bool tt_is_empty(const Engine& engine) {
         for (std::size_t i = 0; i < Engine::kTTSize; ++i) {
-            const auto& entry = engine.transposition[i];
+            const auto entry = engine.probe_tt(i);
             if (entry.key || entry.score || entry.depth || entry.bound || entry.best_move)
                 return false;
         }
@@ -184,14 +189,17 @@ struct EngineTestAccess {
     }
 
     static std::vector<Engine::TranspositionEntry> tt_snapshot(const Engine& engine) {
-        return std::vector<Engine::TranspositionEntry>(
-            engine.transposition.get(), engine.transposition.get() + Engine::kTTSize);
+        std::vector<Engine::TranspositionEntry> snapshot;
+        snapshot.reserve(Engine::kTTSize);
+        for (std::size_t i = 0; i < Engine::kTTSize; ++i)
+            snapshot.push_back(engine.probe_tt(i));
+        return snapshot;
     }
 
     static bool tt_matches_snapshot(const Engine& engine,
                                     const std::vector<Engine::TranspositionEntry>& snapshot) {
         for (std::size_t i = 0; i < Engine::kTTSize; ++i) {
-            const auto& actual = engine.transposition[i];
+            const auto actual = engine.probe_tt(i);
             const auto& expected = snapshot[i];
             if (actual.key != expected.key || actual.score != expected.score ||
                 actual.depth != expected.depth || actual.bound != expected.bound ||
@@ -202,12 +210,13 @@ struct EngineTestAccess {
     }
 
     static void seed_horizon_sentinel(Engine& engine, const Board& board) {
-        auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        Engine::TranspositionEntry entry{};
         entry.key = board.get_hash();
         entry.score = 987654;
         entry.depth = 255;
         entry.bound = static_cast<std::uint8_t>(Engine::BoundType::Exact);
         entry.best_move = Engine::encode_move(Move{3, 0, 3, 4});
+        seed_entry(engine, entry);
     }
 
     static int horizon_score(Engine& engine, Board& board,
@@ -226,41 +235,44 @@ struct EngineTestAccess {
     }
 
     static void seed_root_lower(Engine& engine, const Board& board, const Move& witness) {
-        auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        Engine::TranspositionEntry entry{};
         entry.key = board.get_hash();
         entry.score = 100;
         entry.depth = 2;
         entry.bound = static_cast<std::uint8_t>(Engine::BoundType::Lower);
         entry.best_move = Engine::encode_move(witness);
+        seed_entry(engine, entry);
     }
 
     static void seed_bound(Engine& engine, const Board& board, const Move& move,
                            int score, int depth, bool lower) {
-        auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        Engine::TranspositionEntry entry{};
         entry.key = board.get_hash();
         entry.score = score;
         entry.depth = static_cast<std::uint8_t>(depth);
         entry.bound = static_cast<std::uint8_t>(lower ? Engine::BoundType::Lower
                                                        : Engine::BoundType::Upper);
         entry.best_move = Engine::encode_move(move);
+        seed_entry(engine, entry);
     }
 
     static void weaken_root_to_lower_bound(Engine& engine, const Board& board) {
-        auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        auto entry = engine.probe_tt(board.get_hash());
         if (entry.key != board.get_hash()) throw std::runtime_error("root TT key missing");
         entry.score = -100;
         entry.bound = static_cast<std::uint8_t>(Engine::BoundType::Lower);
+        seed_entry(engine, entry);
     }
 
     static bool root_is_exact_zero(const Engine& engine, const Board& board) {
-        const auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        const auto entry = engine.probe_tt(board.get_hash());
         return entry.key == board.get_hash() && entry.score == 0 && entry.depth == 1
             && entry.bound == static_cast<std::uint8_t>(Engine::BoundType::Exact)
             && entry.best_move == Engine::encode_move(engine.get_best_move());
     }
 
     static Move cached_move(const Engine& engine, const Board& board) {
-        const auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        const auto entry = engine.probe_tt(board.get_hash());
         if (entry.key != board.get_hash()) throw std::runtime_error("root TT key missing");
         return Engine::decode_move(entry.best_move);
     }
@@ -270,6 +282,41 @@ namespace {
 
 void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+void test_move_comparisons_are_complements() {
+    const auto compare = [](const Move& left, const Move& right, bool equal) {
+        require((left == right) == equal && (right == left) == equal,
+                "Move equality disagrees with its fields");
+        require((left != right) == !equal && (right != left) == !equal,
+                "Move inequality is not the complement of equality");
+    };
+
+    const Move invalid;
+    compare(invalid, Move{}, true);
+    compare(invalid, Move{-1, -1, -1, -1, SpecialMove::None}, true);
+    compare(invalid, Move{1, 2, 3, 4}, false);
+
+    const SpecialMove specials[] = {
+        SpecialMove::None, SpecialMove::CastleKingside, SpecialMove::CastleQueenside,
+        SpecialMove::PromoteQueen, SpecialMove::PromoteRook,
+        SpecialMove::PromoteBishop, SpecialMove::PromoteKnight
+    };
+    const auto coordinates = {&Move::old_x, &Move::old_y, &Move::new_x, &Move::new_y};
+    for (const auto special : specials) {
+        const Move original{1, 2, 3, 4, special};
+        compare(original, Move{original}, true);
+        for (const auto coordinate : coordinates) {
+            Move changed = original;
+            ++(changed.*coordinate);
+            compare(original, changed, false);
+        }
+        for (const auto other_special : specials) {
+            Move changed = original;
+            changed.special_move = other_special;
+            compare(original, changed, special == other_special);
+        }
+    }
 }
 
 bool play(Board& board, const Move& move) {
@@ -2871,6 +2918,7 @@ void test_colliding_children_cannot_corrupt_the_root_tt_move() {
 
 int main() {
     try {
+        test_move_comparisons_are_complements();
         test_pre_cancelled_search_does_no_work_or_tt_writes();
         test_main_search_cancellation_stops_before_node_publication_and_recovers();
         test_quiescence_cancellation_at_stand_pat_and_recursive_capture();

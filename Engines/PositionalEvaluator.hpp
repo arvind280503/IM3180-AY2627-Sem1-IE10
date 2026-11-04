@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <utility>
+#include <typeinfo>
 
 class Board;
 
@@ -28,6 +29,11 @@ public:
     ~PositionalEvaluator() override = default;
 
     int evaluate(const Board& board) const override;
+    std::unique_ptr<Evaluator> clone() const override {
+        if (typeid(*this) != typeid(PositionalEvaluator))
+            throw std::logic_error("PositionalEvaluator subclasses must override clone()");
+        return std::make_unique<PositionalEvaluator>(*this);
+    }
 
 private:
     // Static terms, White's point of view.

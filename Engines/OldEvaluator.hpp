@@ -4,6 +4,7 @@
 
 #include <array>
 #include <memory>
+#include <typeinfo>
 
 class Board;
 
@@ -21,4 +22,9 @@ public:
     ~OldEvaluator() override = default;
 
     int evaluate(const Board& board) const override;
+    std::unique_ptr<Evaluator> clone() const override {
+        if (typeid(*this) != typeid(OldEvaluator))
+            throw std::logic_error("OldEvaluator subclasses must override clone()");
+        return std::make_unique<OldEvaluator>(*this);
+    }
 };

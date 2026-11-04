@@ -2,6 +2,8 @@
 
 #include "evaluator.hpp"
 
+#include <typeinfo>
+
 class Board;
 
 class AggressiveEvaluator : public Evaluator {
@@ -22,6 +24,11 @@ public:
 
     // Score from the point of view of the side to move (negamax style).
     int evaluate(const Board& board) const override;
+    std::unique_ptr<Evaluator> clone() const override {
+        if (typeid(*this) != typeid(AggressiveEvaluator))
+            throw std::logic_error("AggressiveEvaluator subclasses must override clone()");
+        return std::make_unique<AggressiveEvaluator>(*this);
+    }
 
 private:
     // Score from White's point of view (positive = good for White).

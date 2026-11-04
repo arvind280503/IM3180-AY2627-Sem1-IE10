@@ -2,6 +2,7 @@
 
 #include "board.hpp"
 #include "evaluator.hpp"
+#include "transposition_table.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -16,19 +17,9 @@ class Engine {
 
     enum class BoundType : std::uint8_t { Exact = 0, Lower = 1, Upper = 2 };
 
-    // Flat open-addressed transposition table with a fixed size per engine
-    // (1M entries = 16 MiB). A slot whose key is 0 is empty; a hit requires
-    // an exact 64-bit key match.
-    static constexpr std::size_t kTTSize = 1u << 20;
-    static constexpr std::size_t kTTMask = kTTSize - 1;
+    static constexpr std::size_t kTTSize = SharedTranspositionTable::kSize;
 
-    struct TranspositionEntry {
-        std::uint64_t key = 0;
-        int score = 0;
-        std::uint8_t depth = 0;    // remaining depth when stored
-        std::uint8_t bound = 0;    // BoundType
-        std::uint32_t best_move = 0; // encoded best move, 0 = none
-    };
+    using TranspositionEntry = ::TranspositionEntry;
 
     static std::uint32_t encode_move(const Move& move);
     static Move decode_move(std::uint32_t packed);
@@ -41,9 +32,21 @@ class Engine {
     Move best_move{};
     std::size_t search_nodes = 0;
     std::size_t closed_window_nodes = 0;
-    std::unique_ptr<TranspositionEntry[]> transposition;
+    std::shared_ptr<SharedTranspositionTable> shared_transposition;
+    TranspositionEntry probe_tt(Hash key) const;
+    void store_tt(const TranspositionEntry& entry, int replacement_depth = -1);
+    Engine(int side, int search_depth, std::unique_ptr<Evaluator> evaluator,
+           std::shared_ptr<SharedTranspositionTable> shared_table);
     std::vector<std::array<std::uint32_t, 2>> killer_moves;
     std::array<std::array<std::array<std::uint32_t, 64>, 64>, 2> history_scores{};
+    int search_threads = 1;
+    // Contexts/tables persist across searches, until configuration changes or destruction.
+    std::vector<std::unique_ptr<Engine>> root_workers;
+    const std::atomic<bool>* parallel_abort = nullptr;
+    void check_cancelled(const std::atomic<bool>* stop) const;
+    void prepare_root_workers(std::size_t count);
+    int parallel_root_search(const Board& position, int max_depth, Move& root_move,
+                             const std::atomic<bool>* stop);
 
     static constexpr int kMaxQuiescencePly = 8;
     int quiescence_search(Board& board, int alpha, int beta, int capture_ply,
@@ -65,6 +68,12 @@ public:
     int get_side() const;
     int get_search_depth() const;
     void set_search_depth(int search_depth);
+    // Total search participants, including the caller; configure only while idle.
+    int get_search_threads() const;
+    void set_search_threads(int threads);
+    // Unique CAS slots + table objects, excluding allocator/shared_ptr
+    // bookkeeping and Engine contexts; not process RSS.
+    std::size_t get_tt_memory_bytes() const;
     const Evaluator& get_evaluator() const;
     const EngineConfig& get_config() const;
 

@@ -3,20 +3,31 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <exception>
+#include <thread>
+#include <typeinfo>
 
 namespace {
 struct SearchCancelled {};
-
-void check_cancelled(const std::atomic<bool>* stop) {
-    if (stop && stop->load(std::memory_order_relaxed)) throw SearchCancelled{};
 }
+
+void Engine::check_cancelled(const std::atomic<bool>* stop) const {
+    if ((stop && stop->load(std::memory_order_relaxed)) ||
+        (parallel_abort && parallel_abort->load(std::memory_order_relaxed)))
+        throw SearchCancelled{};
 }
 
 Engine::Engine(int engine_side, int search_depth,
                std::unique_ptr<Evaluator> engine_evaluator)
+    : Engine(engine_side, search_depth, std::move(engine_evaluator),
+             std::make_shared<SharedTranspositionTable>()) {}
+
+Engine::Engine(int engine_side, int search_depth,
+               std::unique_ptr<Evaluator> engine_evaluator,
+               std::shared_ptr<SharedTranspositionTable> shared_table)
     : side(engine_side), default_search_depth(search_depth),
       evaluator(std::move(engine_evaluator)),
-      transposition(std::make_unique<TranspositionEntry[]>(kTTSize)) {
+      shared_transposition(std::move(shared_table)) {
     if (side < 0 || side > 1) {
         throw std::invalid_argument("engine side must be 0 (White) or 1 (Black)");
     }
@@ -31,6 +42,35 @@ Engine::Engine(int engine_side, int search_depth, EngineConfig config)
 
 int Engine::get_side() const { return side; }
 int Engine::get_search_depth() const { return default_search_depth; }
+int Engine::get_search_threads() const { return search_threads; }
+
+std::size_t Engine::get_tt_memory_bytes() const {
+    return shared_transposition->memory_bytes();
+}
+
+Engine::TranspositionEntry Engine::probe_tt(Hash key) const {
+    return shared_transposition->probe(key);
+}
+
+void Engine::store_tt(const TranspositionEntry& entry, int replacement_depth) {
+    shared_transposition->store(entry, replacement_depth);
+}
+
+void Engine::set_search_threads(int threads) {
+    if (threads < 1) throw std::invalid_argument("search threads must be positive");
+    if (threads != search_threads) root_workers.clear();
+    search_threads = threads;
+}
+
+void Engine::prepare_root_workers(std::size_t count) {
+    while (root_workers.size() < count) {
+        auto copy = evaluator->clone();
+        if (!copy || typeid(*copy) != typeid(*evaluator))
+            throw std::logic_error("parallel evaluator clone must preserve dynamic type");
+        root_workers.push_back(std::unique_ptr<Engine>(new Engine(side, default_search_depth,
+            std::move(copy), shared_transposition)));
+    }
+}
 
 void Engine::set_search_depth(int search_depth) {
     if (search_depth < 1) {
@@ -68,7 +108,7 @@ std::uint32_t Engine::encode_move(const Move& move) {
         static_cast<std::uint32_t>(move.old_x * 8 + move.old_y);
     const std::uint32_t to =
         static_cast<std::uint32_t>(move.new_x * 8 + move.new_y);
-    // from (6 bits) | to (6 bits) | special move (3 bits) = 15 bits.
+    // Highest used bit is 17: from at bit 12, to at bit 4, special at bit 0.
     return (from << 12) | (to << 4) |
            static_cast<std::uint32_t>(move.special_move);
 }
@@ -230,7 +270,7 @@ int Engine::negamax_search(Board& board, int depth, int max_depth,
             static_cast<std::uint64_t>(history) + bonus,
             std::numeric_limits<std::uint32_t>::max()));
     };
-    TranspositionEntry& entry = transposition[key & kTTMask];
+    const TranspositionEntry entry = probe_tt(key);
     const std::uint32_t tt_best = entry.key == key ? entry.best_move : 0;
     if (entry.key == key && entry.depth >= max_depth - depth) {
         if (entry.bound == static_cast<std::uint8_t>(BoundType::Exact)) {
@@ -330,14 +370,99 @@ int Engine::negamax_search(Board& board, int depth, int max_depth,
         ? BoundType::Upper
         : (best_score >= original_beta ? BoundType::Lower : BoundType::Exact);
     const int new_depth = std::max(0, max_depth - depth);
-    if (entry.key != key || new_depth >= entry.depth) {
-        entry.key = key;
-        entry.score = best_score;
-        entry.depth = static_cast<std::uint8_t>(new_depth);
-        entry.bound = static_cast<std::uint8_t>(bound);
-        entry.best_move = best_packed_move;
-    }
+    store_tt({key, best_score, static_cast<std::uint8_t>(new_depth),
+              static_cast<std::uint8_t>(bound), best_packed_move}, new_depth);
     return best_score;
+}
+
+int Engine::parallel_root_search(const Board& position, int max_depth, Move& root_move,
+                                  const std::atomic<bool>* stop) {
+    check_cancelled(stop);
+    Board first_board = position;
+    const Hash key = position.get_hash();
+    const auto cached = probe_tt(key);
+    const auto moves = order_moves(first_board, cached.key == key ? cached.best_move : 0,
+        killer_moves.empty() ? nullptr : &killer_moves[0]);
+    if (moves.size() < 2)
+        return negamax_search(first_board, 0, max_depth, NEGINF, INF, &root_move, 0, stop);
+
+    const std::size_t participants = std::min<std::size_t>(search_threads, moves.size() - 1);
+    prepare_root_workers(participants - 1);
+    ++search_nodes;
+    const int turn = position.get_current_turn();
+    const auto search_move = [&](Engine& context, Board& board, const Move& move, int alpha) {
+        context.check_cancelled(stop);
+        if (!board.make_move(move)) throw std::logic_error("generated root move is illegal");
+        const bool changed = board.get_current_turn() != turn;
+        const int score = changed
+            ? -context.negamax_search(board, 1, max_depth, -INF, -alpha, nullptr, 1, stop)
+            : context.negamax_search(board, 0, max_depth, alpha, INF, nullptr, 1, stop);
+        board.rollback_move();
+        context.check_cancelled(stop);
+        return score;
+    };
+    const auto publish = [&](int score, const Move& move) {
+        check_cancelled(stop);
+        store_tt({key, score, static_cast<std::uint8_t>(max_depth),
+            static_cast<std::uint8_t>(score <= NEGINF ? BoundType::Upper :
+                (score >= INF ? BoundType::Lower : BoundType::Exact)), encode_move(move)}, max_depth);
+        root_move = move;
+        return score;
+    };
+    std::vector<int> scores(moves.size(), NEGINF);
+    scores[0] = search_move(*this, first_board, moves[0], NEGINF);
+    const int first_alpha = scores[0];
+    if (first_alpha >= INF) return publish(first_alpha, moves[0]);
+    std::atomic<std::size_t> next{1};
+    std::atomic<bool> abort{false};
+    std::vector<std::exception_ptr> failures(participants);
+    std::vector<std::thread> threads;
+    threads.reserve(participants - 1);
+    parallel_abort = &abort;
+    for (std::size_t i = 1; i < participants; ++i) root_workers[i - 1]->parallel_abort = &abort;
+    const auto run = [&](std::size_t index) {
+        Engine& context = index == 0 ? *this : *root_workers[index - 1];
+        try {
+            Board board = position;
+            for (;;) {
+                context.check_cancelled(stop);
+                const auto job = next.fetch_add(1, std::memory_order_relaxed);
+                if (job >= moves.size()) break;
+                scores[job] = search_move(context, board, moves[job], first_alpha);
+            }
+        } catch (const SearchCancelled&) {
+            abort.store(true, std::memory_order_relaxed);
+        } catch (...) {
+            failures[index] = std::current_exception();
+            abort.store(true, std::memory_order_relaxed);
+        }
+    };
+    std::exception_ptr launch_failure;
+    try {
+        for (std::size_t i = 1; i < participants; ++i) threads.emplace_back(run, i);
+        run(0);
+    } catch (...) {
+        launch_failure = std::current_exception();
+        abort.store(true, std::memory_order_relaxed);
+    }
+    for (auto& thread : threads) thread.join();
+    parallel_abort = nullptr;
+    for (std::size_t i = 1; i < participants; ++i) root_workers[i - 1]->parallel_abort = nullptr;
+    if (launch_failure) std::rethrow_exception(launch_failure);
+    for (const auto& failure : failures) if (failure) std::rethrow_exception(failure);
+    check_cancelled(stop);
+    if (abort.load(std::memory_order_relaxed)) throw SearchCancelled{};
+
+    // Scores at/below first_alpha are upper bounds, never exact tie witnesses.
+    int best_score = scores[0];
+    Move selected = moves[0];
+    for (std::size_t i = 1; i < moves.size(); ++i) {
+        if (scores[i] > best_score) {
+            best_score = scores[i];
+            selected = moves[i];
+        }
+    }
+    return publish(best_score, selected);
 }
 
 bool Engine::find_best_move(const Board& position, int requested_depth,
@@ -350,6 +475,18 @@ bool Engine::find_best_move(const Board& position, int requested_depth,
     closed_window_nodes = 0;
     killer_moves.clear();
     history_scores = {};
+    for (auto& worker : root_workers) {
+        worker->search_nodes = 0;
+        worker->closed_window_nodes = 0;
+        worker->killer_moves.clear();
+        worker->history_scores = {};
+    }
+    const auto collect_counters = [&] {
+        for (const auto& worker : root_workers) {
+            search_nodes += worker->search_nodes;
+            closed_window_nodes += worker->closed_window_nodes;
+        }
+    };
 
     if (stop && stop->load(std::memory_order_relaxed)) return false;
     if (!is_turn(position)) return false;
@@ -360,15 +497,24 @@ bool Engine::find_best_move(const Board& position, int requested_depth,
         for (int iteration_depth = 1; iteration_depth <= search_depth; ++iteration_depth) {
             check_cancelled(stop);
             Move iteration_move{};
-            negamax_search(search_board, 0, iteration_depth,
-                           NEGINF, INF, &iteration_move, 0, stop);
+            if (search_threads == 1)
+                negamax_search(search_board, 0, iteration_depth,
+                               NEGINF, INF, &iteration_move, 0, stop);
+            else
+                parallel_root_search(position, iteration_depth, iteration_move, stop);
             check_cancelled(stop);
             best_move = iteration_move;
         }
     } catch (const SearchCancelled&) {
         best_move = Move{};
+        collect_counters();
         return false;
+    } catch (...) {
+        best_move = Move{};
+        collect_counters();
+        throw;
     }
+    collect_counters();
     return best_move.old_x != -1;
 }
 

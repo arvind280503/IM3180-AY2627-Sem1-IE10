@@ -3,6 +3,8 @@
 #include "board.hpp"
 
 #include <array>
+#include <memory>
+#include <stdexcept>
 
 struct EngineConfig {
     std::array<int, 64> pawn_sq_table{};
@@ -25,6 +27,9 @@ class Evaluator {
 public:
     virtual ~Evaluator() = default;
     virtual int evaluate(const Board& board) const = 0;
+    virtual std::unique_ptr<Evaluator> clone() const {
+        throw std::logic_error("evaluator does not support parallel search cloning");
+    }
 };
 
 class StandardEvaluator final : public Evaluator {
@@ -34,5 +39,8 @@ public:
     explicit StandardEvaluator(EngineConfig config = EngineConfig::standard());
 
     int evaluate(const Board& board) const override;
+    std::unique_ptr<Evaluator> clone() const override {
+        return std::make_unique<StandardEvaluator>(*this);
+    }
     const EngineConfig& get_config() const;
 };
