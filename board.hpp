@@ -32,6 +32,10 @@ struct Move {
             && new_x == other.new_x && new_y == other.new_y
             && special_move == other.special_move;
     }
+
+    bool operator!=(const Move& other) const {
+        return !(*this == other);
+    }
 };
 
 enum class CastlingRight : std::uint8_t {
