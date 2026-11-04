@@ -2,38 +2,41 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Build Chess",
+      "label": "Configure Chess",
       "type": "process",
-      "command": "C:\\msys64\\ucrt64\\bin\\g++.exe",
+      "command": "cmake",
       "args": [
-        "-DCHESS_DATA_DIRECTORY=\"data\"",
-        "-std=c++17",
-        "-g",
-        "-I${workspaceFolder}",
-        "${workspaceFolder}/main.cpp",
-        "${workspaceFolder}/board.cpp",
-        "${workspaceFolder}/evaluator.cpp",
-        "${workspaceFolder}/engine.cpp",
-        "${workspaceFolder}/Engines/AggressiveEvaluator.cpp",
-        "${workspaceFolder}/Engines/PositionalEvaluator.cpp",
-        "${workspaceFolder}/Engines/OldEvaluator.cpp",
-        "${workspaceFolder}/storage/local_store.cpp",
-        "${workspaceFolder}/UI files/ui.cpp",
-        "-o",
-        "${workspaceFolder}/chess.exe",
-        "-lsfml-graphics",
-        "-lsfml-window",
-        "-lsfml-audio",
-        "-lsfml-system",
-        "-lsqlite3",
-        "-lbcrypt"
+        "-S", "${workspaceFolder}",
+        "-B", "${workspaceFolder}/build",
+        "-G", "MinGW Makefiles",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_CXX_COMPILER=C:/msys64/ucrt64/bin/g++.exe",
+        "-DCMAKE_PREFIX_PATH=C:/msys64/ucrt64"
       ],
       "options": {
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "C:\\msys64\\ucrt64\\bin;${env:PATH}"
+        }
       },
-      "problemMatcher": [
-        "$gcc"
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Chess",
+      "type": "process",
+      "command": "cmake",
+      "args": [
+        "--build", "${workspaceFolder}/build",
+        "--parallel", "4"
       ],
+      "dependsOn": "Configure Chess",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "C:\\msys64\\ucrt64\\bin;${env:PATH}"
+        }
+      },
+      "problemMatcher": ["$gcc"],
       "group": {
         "kind": "build",
         "isDefault": true

@@ -5,41 +5,69 @@ search engine.
 
 ## Build with CMake
 
+Requirements: CMake 3.28 or newer, Git, GCC targeting x86-64 with native
+128-bit CAS support (`-mcx16`), a CPU supporting CMPXCHG16B, and SQLite3
+headers/library. The coherent CAS transposition table deliberately has no
+MSVC, Clang, ARM, or mutex fallback; unsupported compiler configurations fail
+during configuration and unsupported CPUs are rejected when an Engine is created.
+The project targets C++17 explicitly, including its tests.
+
 The default configuration builds the GUI and fetches SFML 3.0.2 during the
-CMake configure step. A machine with CMake, a C++17 compiler, Git, SQLite3
-headers/library, and network access for the first configure can build the project.
-On non-Windows systems, OpenSSL's Crypto library is also required for SHA-256.
-Windows uses the system BCrypt API.
+first configure, which requires network access. Core-only builds do not fetch
+SFML. On non-Windows systems, OpenSSL Crypto is also required for SHA-256;
+the GUI additionally needs SFML's platform dependencies. Windows uses BCrypt.
 
-For MSYS2 UCRT64, install `mingw-w64-ucrt-x86_64-sqlite3` if SQLite is missing,
-and pass the toolchain prefix so CMake can locate it:
+### Windows: MSYS2 UCRT64
 
-```powershell
-cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=C:/msys64/ucrt64
-cmake --build build --parallel
+Install these packages from the MSYS2 UCRT64 shell (CMake 3.28+ and Git must
+also be available):
+
+```sh
+pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make mingw-w64-ucrt-x86_64-sqlite3
 ```
 
-On Windows, use the matching MinGW runtime DLLs when launching the GUI. For the
-UCRT64 toolchain, prepend its runtime directory in the launching terminal:
+From PowerShell in a clean clone, set the matching toolchain/runtime PATH
+before configuring, building, testing, or running:
 
 ```powershell
 $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=C:/msys64/ucrt64/bin/g++.exe -DCMAKE_PREFIX_PATH=C:/msys64/ucrt64
+cmake --build build --parallel 4
+ctest --test-dir build --output-on-failure
 .\chess.exe
 ```
 
-Run the public Board/Engine checks with:
+If using Git Bash instead of PowerShell, prepend PATH using shell syntax:
 
-```powershell
-ctest --test-dir build --output-on-failure
+```sh
+export PATH="/c/msys64/ucrt64/bin:$PATH"
 ```
 
-The core library and tests can be built without SFML:
+Do not reuse a build directory configured with another compiler or generator.
+A Windows `0xc0000139` startup error can indicate mismatched runtime DLLs;
+use the UCRT64 PATH above for CTest as well as the application.
+
+For a core-only Release build using the same PowerShell PATH:
 
 ```powershell
-cmake -S . -B build-core -G "MinGW Makefiles" -DCHESS_BUILD_GUI=OFF -DCMAKE_PREFIX_PATH=C:/msys64/ucrt64
-cmake --build build-core --parallel
+cmake -S . -B build-core -G "MinGW Makefiles" -DCHESS_BUILD_GUI=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=C:/msys64/ucrt64/bin/g++.exe -DCMAKE_PREFIX_PATH=C:/msys64/ucrt64
+cmake --build build-core --parallel 4
 ctest --test-dir build-core --output-on-failure
 ```
+
+VS Code's default **Build Chess** task runs the same CMake configure/build
+pipeline, including SFML fetching and the CAS compiler check. Its UCRT64 path
+is configured for the standard `C:/msys64` installation; adjust it if necessary.
+No prebuilt executable, local database, or existing build directory is required.
+
+### Tests and current limitation
+
+Core CTest runs the TT, root-parallel search, Board/Engine, and storage suites.
+GUI builds add account/history and UI-worker integration suites. The existing
+UI-worker history fixture still expects the older after-move/auto-resume
+behavior, while the current UI restores the selected move's parent and pauses
+until RESUME; that known test failure is not a compilation failure and has not
+been hidden or disabled. Storage tests use isolated build-directory databases.
 
 The older `board_tests.cpp` suite targets the former Board-owned engine API and
 is intentionally not part of the CMake test target while it is migrated. The
@@ -82,6 +110,16 @@ transposition table between iterations. A matching shallow entry supplies only
 its best-move ordering hint; cached scores and bounds require sufficient depth.
 Node counters include all iterations. The shared engine/UI default depth is 3;
 an explicit depth (including 4) can still be passed to either constructor or search.
+`Engine::set_search_threads(n)` opts into root splitting; `n` includes the caller
+and defaults to 1. The first ordered root move is searched serially, then the
+remaining branches are distributed among bounded participants. Board/evaluator,
+killer/history, and counter state stay private; the group shares one coherent
+native-CAS transposition table. Independent Engines keep separate tables.
+Configure participant count only while idle. Custom evaluators need a `clone()`
+override preserving their dynamic type and configuration for parallel search;
+sequential custom evaluators do not need to implement it. The built-in Standard,
+Aggressive, Positional, and Old evaluators support cloning. No UI thread/depth
+default is changed by this API.
 The same evaluator injection is available through `ChessUI`'s optional White
 and Black evaluator constructor arguments; omitting them keeps the standard
 evaluator for both sides.
