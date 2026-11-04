@@ -1,11 +1,13 @@
-#include "NewEvaluator.hpp"
+#include "OldEvaluator.hpp"
+#include "../board.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <utility>
 #include <vector>
 
-const std::array<int, 64> NewEvaluator::king_eg_sq_table = {
+const std::array<int, 64> OldEvaluator::king_eg_sq_table = {
     -50, -40, -30, -30, -30, -30, -40, -50,
     -30, -20, -10,   0,   0, -10, -20, -30,
     -30, -10,  20,  30,  30,  20, -10, -30,
@@ -16,15 +18,15 @@ const std::array<int, 64> NewEvaluator::king_eg_sq_table = {
     -50, -30, -30, -30, -30, -30, -30, -50
 };
 
-NewEvaluator::NewEvaluator(EngineConfig evaluator_config)
+OldEvaluator::OldEvaluator(EngineConfig evaluator_config)
     : standard_evaluator(evaluator_config),
       config(std::move(evaluator_config)) {}
 
-int NewEvaluator::evaluate(const Board& board) const {
+int OldEvaluator::evaluate(const Board& board) const {
     return standard_evaluator.evaluate(board) + evaluate_new_heuristic(board);
 }
 
-int NewEvaluator::evaluate_new_heuristic(const Board& board) const {
+int OldEvaluator::evaluate_new_heuristic(const Board& board) const {
     if (board.has_game_ended()) {
         const int winner_score = board.get_game_status() > 0 ? 999999 : -999999;
         return winner_score * (board.get_current_turn() ? -1 : 1);

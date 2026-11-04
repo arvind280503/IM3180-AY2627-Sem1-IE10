@@ -1,10 +1,14 @@
 #pragma once
 
-#include "../evaluator.hpp"
+#include "evaluator.hpp"
 
 #include <array>
+#include <memory>
 
-class NewEvaluator final : public Evaluator {
+class Board;
+
+class OldEvaluator : public Evaluator {
+private:
     StandardEvaluator standard_evaluator;
     EngineConfig config;
 
@@ -13,7 +17,8 @@ class NewEvaluator final : public Evaluator {
     int evaluate_new_heuristic(const Board& board) const;
 
 public:
-    explicit NewEvaluator(EngineConfig evaluator_config = EngineConfig::standard());
+    explicit OldEvaluator(EngineConfig evaluator_config = EngineConfig::standard());
+    ~OldEvaluator() override = default;
 
     int evaluate(const Board& board) const override;
 };

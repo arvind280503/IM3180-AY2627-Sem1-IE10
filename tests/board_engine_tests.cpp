@@ -1,7 +1,7 @@
 #include "../board.hpp"
 #include "../engine.hpp"
-#include "../Engines/NewEvaluator.hpp"
-#include "../Engines/SecondEvaluator.hpp"
+#include "../Engines/AggressiveEvaluator.hpp"
+#include "../Engines/PositionalEvaluator.hpp"
 
 #include <iostream>
 #include <algorithm>
@@ -546,8 +546,8 @@ void test_evaluator_exceptions_are_not_converted_to_cancellation() {
 void test_false_stop_token_matches_omitted_token_cold_and_warm() {
     for (int evaluator_kind : {0, 1, 2}) {
         auto make_evaluator = [=]() -> std::unique_ptr<Evaluator> {
-            if (evaluator_kind == 1) return std::make_unique<NewEvaluator>();
-            if (evaluator_kind == 2) return std::make_unique<SecondEvaluator>();
+            if (evaluator_kind == 1) return std::make_unique<AggressiveEvaluator>();
+            if (evaluator_kind == 2) return std::make_unique<PositionalEvaluator>();
             return std::make_unique<StandardEvaluator>();
         };
         for (int actions : {1, 2}) {
@@ -2102,12 +2102,12 @@ void test_custom_evaluator_is_used() {
 
 void test_new_evaluator_is_injectable() {
     Board board;
-    Engine engine(0, 1, std::make_unique<NewEvaluator>());
+    Engine engine(0, 1, std::make_unique<AggressiveEvaluator>());
 
-    require(dynamic_cast<const NewEvaluator*>(&engine.get_evaluator()) != nullptr,
-            "NewEvaluator was not retained by the engine");
+    require(dynamic_cast<const AggressiveEvaluator*>(&engine.get_evaluator()) != nullptr,
+            "AggressiveEvaluator was not retained by the engine");
     require(engine.evaluate(board) == engine.get_evaluator().evaluate(board),
-            "Engine did not delegate evaluation to NewEvaluator");
+            "Engine did not delegate evaluation to AggressiveEvaluator");
 }
 
 void test_search_does_not_mutate_position() {
@@ -2358,12 +2358,12 @@ void test_killer_ordered_search_matches_independent_minimax() {
             BoardTestAccess::set_piece(board, 6, 7, -6);
             BoardTestAccess::set_piece(board, 3, 3, 1);
             BoardTestAccess::set_piece(board, 4, 4, -1);
-            const std::string context = "killer SecondEvaluator side " + std::to_string(side)
+            const std::string context = "killer PositionalEvaluator side " + std::to_string(side)
                 + ", actions " + std::to_string(actions);
-            const SecondEvaluator evaluator;
+            const PositionalEvaluator evaluator;
             Board oracle = board;
             const int exact = exhaustive_score(oracle, evaluator, 0, 2);
-            Engine engine(side, 2, std::make_unique<SecondEvaluator>());
+            Engine engine(side, 2, std::make_unique<PositionalEvaluator>());
             std::vector<Move> quiet;
             for (const Move& move : board.legal_moves())
                 if (board.get_piece(move.new_x, move.new_y) == 0 &&
@@ -2384,7 +2384,7 @@ void test_killer_ordered_search_matches_independent_minimax() {
             require((changed ? -score : score) == exact && same_board(board, before) &&
                         BoardTestAccess::undo_size(board) == 0,
                     context + ": nonoptimal move or mutated root");
-            require_pvs_matches_minimax<SecondEvaluator>(board, 2, context);
+            require_pvs_matches_minimax<PositionalEvaluator>(board, 2, context);
         }
     }
 }
@@ -2398,12 +2398,12 @@ void test_history_ordered_search_matches_independent_minimax() {
             BoardTestAccess::set_piece(board, 6, 7, -6);
             BoardTestAccess::set_piece(board, 3, 3, 1);
             BoardTestAccess::set_piece(board, 4, 4, -1);
-            const std::string context = "history SecondEvaluator side " + std::to_string(side)
+            const std::string context = "history PositionalEvaluator side " + std::to_string(side)
                 + ", actions " + std::to_string(actions);
-            const SecondEvaluator evaluator;
+            const PositionalEvaluator evaluator;
             Board oracle = board;
             const int exact = exhaustive_score(oracle, evaluator, 0, 2);
-            Engine engine(side, 2, std::make_unique<SecondEvaluator>());
+            Engine engine(side, 2, std::make_unique<PositionalEvaluator>());
             std::vector<Move> quiet;
             for (const Move& move : board.legal_moves())
                 if (board.get_piece(move.new_x, move.new_y) == 0 &&
@@ -2413,7 +2413,7 @@ void test_history_ordered_search_matches_independent_minimax() {
             EngineTestAccess::seed_history(engine, side, quiet.back(), 100);
             require(EngineTestAccess::ordered(engine, board) != normal_order,
                     context + ": seeded history did not alter traversal");
-            Engine independent(side, 2, std::make_unique<SecondEvaluator>());
+            Engine independent(side, 2, std::make_unique<PositionalEvaluator>());
             require(EngineTestAccess::ordered(independent, board) == normal_order &&
                         EngineTestAccess::history_empty(independent),
                     context + ": history leaked into another Engine instance");
@@ -2473,9 +2473,9 @@ void test_pvs_turn_changed_research_matches_minimax() {
     BoardTestAccess::set_piece(board, 7, 7, -6);
     BoardTestAccess::set_piece(board, 2, 2, 2);
     BoardTestAccess::set_piece(board, 4, 3, -2);
-    require_pvs_matches_minimax<NewEvaluator>(board, 1, "PVS turn-changed NewEvaluator");
+    require_pvs_matches_minimax<AggressiveEvaluator>(board, 1, "PVS turn-changed AggressiveEvaluator");
     require_pvs_matches_minimax<StandardEvaluator>(board, 1, "PVS turn-changed StandardEvaluator");
-    require_pvs_matches_minimax<SecondEvaluator>(board, 1, "PVS turn-changed SecondEvaluator");
+    require_pvs_matches_minimax<PositionalEvaluator>(board, 1, "PVS turn-changed PositionalEvaluator");
 }
 
 void test_pvs_same_turn_research_matches_minimax() {
@@ -2486,8 +2486,8 @@ void test_pvs_same_turn_research_matches_minimax() {
     BoardTestAccess::set_piece(board, 2, 2, 1);
     BoardTestAccess::set_piece(board, 4, 3, -1);
     require_pvs_matches_minimax<StandardEvaluator>(board, 2, "PVS same-turn StandardEvaluator");
-    require_pvs_matches_minimax<NewEvaluator>(board, 2, "PVS same-turn NewEvaluator");
-    require_pvs_matches_minimax<SecondEvaluator>(board, 2, "PVS same-turn SecondEvaluator");
+    require_pvs_matches_minimax<AggressiveEvaluator>(board, 2, "PVS same-turn AggressiveEvaluator");
+    require_pvs_matches_minimax<PositionalEvaluator>(board, 2, "PVS same-turn PositionalEvaluator");
 }
 
 void test_iterative_search_matches_exhaustive_final_depth() {
