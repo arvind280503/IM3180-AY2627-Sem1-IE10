@@ -1,7 +1,7 @@
 #include "../board.hpp"
 #include "../engine.hpp"
-#include "../Engines/NewEvaluator.hpp"
-#include "../Engines/SecondEvaluator.hpp"
+#include "../Engines/AggressiveEvaluator.hpp"
+#include "../Engines/PositionalEvaluator.hpp"
 
 #include <iostream>
 #include <algorithm>
@@ -97,8 +97,13 @@ struct BoardTestAccess {
 };
 
 struct EngineTestAccess {
+    static void seed_entry(Engine& engine, const Engine::TranspositionEntry& entry) {
+        // Force fixture overwrites, including shallower entries on a warmed table.
+        engine.store_tt(entry, 255);
+    }
+
     static auto root_entry(const Engine& engine, const Board& board) {
-        const auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        const auto entry = engine.probe_tt(board.get_hash());
         return std::array<std::uint64_t, 5>{entry.key, static_cast<std::uint64_t>(entry.score),
             entry.depth, entry.bound, entry.best_move};
     }
@@ -165,18 +170,18 @@ struct EngineTestAccess {
     }
 
     static void seed_ordering_hint(Engine& engine, const Board& board, const Move& move) {
-        auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
-        entry = {};
+        Engine::TranspositionEntry entry{};
         entry.key = board.get_hash();
         entry.depth = 0;
         entry.best_move = Engine::encode_move(move);
+        seed_entry(engine, entry);
     }
 
     static int quiescence_limit() { return Engine::kMaxQuiescencePly; }
 
     static bool tt_is_empty(const Engine& engine) {
         for (std::size_t i = 0; i < Engine::kTTSize; ++i) {
-            const auto& entry = engine.transposition[i];
+            const auto entry = engine.probe_tt(i);
             if (entry.key || entry.score || entry.depth || entry.bound || entry.best_move)
                 return false;
         }
@@ -184,14 +189,17 @@ struct EngineTestAccess {
     }
 
     static std::vector<Engine::TranspositionEntry> tt_snapshot(const Engine& engine) {
-        return std::vector<Engine::TranspositionEntry>(
-            engine.transposition.get(), engine.transposition.get() + Engine::kTTSize);
+        std::vector<Engine::TranspositionEntry> snapshot;
+        snapshot.reserve(Engine::kTTSize);
+        for (std::size_t i = 0; i < Engine::kTTSize; ++i)
+            snapshot.push_back(engine.probe_tt(i));
+        return snapshot;
     }
 
     static bool tt_matches_snapshot(const Engine& engine,
                                     const std::vector<Engine::TranspositionEntry>& snapshot) {
         for (std::size_t i = 0; i < Engine::kTTSize; ++i) {
-            const auto& actual = engine.transposition[i];
+            const auto actual = engine.probe_tt(i);
             const auto& expected = snapshot[i];
             if (actual.key != expected.key || actual.score != expected.score ||
                 actual.depth != expected.depth || actual.bound != expected.bound ||
@@ -202,12 +210,13 @@ struct EngineTestAccess {
     }
 
     static void seed_horizon_sentinel(Engine& engine, const Board& board) {
-        auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        Engine::TranspositionEntry entry{};
         entry.key = board.get_hash();
         entry.score = 987654;
         entry.depth = 255;
         entry.bound = static_cast<std::uint8_t>(Engine::BoundType::Exact);
         entry.best_move = Engine::encode_move(Move{3, 0, 3, 4});
+        seed_entry(engine, entry);
     }
 
     static int horizon_score(Engine& engine, Board& board,
@@ -226,41 +235,44 @@ struct EngineTestAccess {
     }
 
     static void seed_root_lower(Engine& engine, const Board& board, const Move& witness) {
-        auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        Engine::TranspositionEntry entry{};
         entry.key = board.get_hash();
         entry.score = 100;
         entry.depth = 2;
         entry.bound = static_cast<std::uint8_t>(Engine::BoundType::Lower);
         entry.best_move = Engine::encode_move(witness);
+        seed_entry(engine, entry);
     }
 
     static void seed_bound(Engine& engine, const Board& board, const Move& move,
                            int score, int depth, bool lower) {
-        auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        Engine::TranspositionEntry entry{};
         entry.key = board.get_hash();
         entry.score = score;
         entry.depth = static_cast<std::uint8_t>(depth);
         entry.bound = static_cast<std::uint8_t>(lower ? Engine::BoundType::Lower
                                                        : Engine::BoundType::Upper);
         entry.best_move = Engine::encode_move(move);
+        seed_entry(engine, entry);
     }
 
     static void weaken_root_to_lower_bound(Engine& engine, const Board& board) {
-        auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        auto entry = engine.probe_tt(board.get_hash());
         if (entry.key != board.get_hash()) throw std::runtime_error("root TT key missing");
         entry.score = -100;
         entry.bound = static_cast<std::uint8_t>(Engine::BoundType::Lower);
+        seed_entry(engine, entry);
     }
 
     static bool root_is_exact_zero(const Engine& engine, const Board& board) {
-        const auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        const auto entry = engine.probe_tt(board.get_hash());
         return entry.key == board.get_hash() && entry.score == 0 && entry.depth == 1
             && entry.bound == static_cast<std::uint8_t>(Engine::BoundType::Exact)
             && entry.best_move == Engine::encode_move(engine.get_best_move());
     }
 
     static Move cached_move(const Engine& engine, const Board& board) {
-        const auto& entry = engine.transposition[board.get_hash() & Engine::kTTMask];
+        const auto entry = engine.probe_tt(board.get_hash());
         if (entry.key != board.get_hash()) throw std::runtime_error("root TT key missing");
         return Engine::decode_move(entry.best_move);
     }
@@ -270,6 +282,41 @@ namespace {
 
 void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+void test_move_comparisons_are_complements() {
+    const auto compare = [](const Move& left, const Move& right, bool equal) {
+        require((left == right) == equal && (right == left) == equal,
+                "Move equality disagrees with its fields");
+        require((left != right) == !equal && (right != left) == !equal,
+                "Move inequality is not the complement of equality");
+    };
+
+    const Move invalid;
+    compare(invalid, Move{}, true);
+    compare(invalid, Move{-1, -1, -1, -1, SpecialMove::None}, true);
+    compare(invalid, Move{1, 2, 3, 4}, false);
+
+    const SpecialMove specials[] = {
+        SpecialMove::None, SpecialMove::CastleKingside, SpecialMove::CastleQueenside,
+        SpecialMove::PromoteQueen, SpecialMove::PromoteRook,
+        SpecialMove::PromoteBishop, SpecialMove::PromoteKnight
+    };
+    const auto coordinates = {&Move::old_x, &Move::old_y, &Move::new_x, &Move::new_y};
+    for (const auto special : specials) {
+        const Move original{1, 2, 3, 4, special};
+        compare(original, Move{original}, true);
+        for (const auto coordinate : coordinates) {
+            Move changed = original;
+            ++(changed.*coordinate);
+            compare(original, changed, false);
+        }
+        for (const auto other_special : specials) {
+            Move changed = original;
+            changed.special_move = other_special;
+            compare(original, changed, special == other_special);
+        }
+    }
 }
 
 bool play(Board& board, const Move& move) {
@@ -546,8 +593,8 @@ void test_evaluator_exceptions_are_not_converted_to_cancellation() {
 void test_false_stop_token_matches_omitted_token_cold_and_warm() {
     for (int evaluator_kind : {0, 1, 2}) {
         auto make_evaluator = [=]() -> std::unique_ptr<Evaluator> {
-            if (evaluator_kind == 1) return std::make_unique<NewEvaluator>();
-            if (evaluator_kind == 2) return std::make_unique<SecondEvaluator>();
+            if (evaluator_kind == 1) return std::make_unique<AggressiveEvaluator>();
+            if (evaluator_kind == 2) return std::make_unique<PositionalEvaluator>();
             return std::make_unique<StandardEvaluator>();
         };
         for (int actions : {1, 2}) {
@@ -2102,12 +2149,12 @@ void test_custom_evaluator_is_used() {
 
 void test_new_evaluator_is_injectable() {
     Board board;
-    Engine engine(0, 1, std::make_unique<NewEvaluator>());
+    Engine engine(0, 1, std::make_unique<AggressiveEvaluator>());
 
-    require(dynamic_cast<const NewEvaluator*>(&engine.get_evaluator()) != nullptr,
-            "NewEvaluator was not retained by the engine");
+    require(dynamic_cast<const AggressiveEvaluator*>(&engine.get_evaluator()) != nullptr,
+            "AggressiveEvaluator was not retained by the engine");
     require(engine.evaluate(board) == engine.get_evaluator().evaluate(board),
-            "Engine did not delegate evaluation to NewEvaluator");
+            "Engine did not delegate evaluation to AggressiveEvaluator");
 }
 
 void test_search_does_not_mutate_position() {
@@ -2358,12 +2405,12 @@ void test_killer_ordered_search_matches_independent_minimax() {
             BoardTestAccess::set_piece(board, 6, 7, -6);
             BoardTestAccess::set_piece(board, 3, 3, 1);
             BoardTestAccess::set_piece(board, 4, 4, -1);
-            const std::string context = "killer SecondEvaluator side " + std::to_string(side)
+            const std::string context = "killer PositionalEvaluator side " + std::to_string(side)
                 + ", actions " + std::to_string(actions);
-            const SecondEvaluator evaluator;
+            const PositionalEvaluator evaluator;
             Board oracle = board;
             const int exact = exhaustive_score(oracle, evaluator, 0, 2);
-            Engine engine(side, 2, std::make_unique<SecondEvaluator>());
+            Engine engine(side, 2, std::make_unique<PositionalEvaluator>());
             std::vector<Move> quiet;
             for (const Move& move : board.legal_moves())
                 if (board.get_piece(move.new_x, move.new_y) == 0 &&
@@ -2384,7 +2431,7 @@ void test_killer_ordered_search_matches_independent_minimax() {
             require((changed ? -score : score) == exact && same_board(board, before) &&
                         BoardTestAccess::undo_size(board) == 0,
                     context + ": nonoptimal move or mutated root");
-            require_pvs_matches_minimax<SecondEvaluator>(board, 2, context);
+            require_pvs_matches_minimax<PositionalEvaluator>(board, 2, context);
         }
     }
 }
@@ -2398,12 +2445,12 @@ void test_history_ordered_search_matches_independent_minimax() {
             BoardTestAccess::set_piece(board, 6, 7, -6);
             BoardTestAccess::set_piece(board, 3, 3, 1);
             BoardTestAccess::set_piece(board, 4, 4, -1);
-            const std::string context = "history SecondEvaluator side " + std::to_string(side)
+            const std::string context = "history PositionalEvaluator side " + std::to_string(side)
                 + ", actions " + std::to_string(actions);
-            const SecondEvaluator evaluator;
+            const PositionalEvaluator evaluator;
             Board oracle = board;
             const int exact = exhaustive_score(oracle, evaluator, 0, 2);
-            Engine engine(side, 2, std::make_unique<SecondEvaluator>());
+            Engine engine(side, 2, std::make_unique<PositionalEvaluator>());
             std::vector<Move> quiet;
             for (const Move& move : board.legal_moves())
                 if (board.get_piece(move.new_x, move.new_y) == 0 &&
@@ -2413,7 +2460,7 @@ void test_history_ordered_search_matches_independent_minimax() {
             EngineTestAccess::seed_history(engine, side, quiet.back(), 100);
             require(EngineTestAccess::ordered(engine, board) != normal_order,
                     context + ": seeded history did not alter traversal");
-            Engine independent(side, 2, std::make_unique<SecondEvaluator>());
+            Engine independent(side, 2, std::make_unique<PositionalEvaluator>());
             require(EngineTestAccess::ordered(independent, board) == normal_order &&
                         EngineTestAccess::history_empty(independent),
                     context + ": history leaked into another Engine instance");
@@ -2473,9 +2520,9 @@ void test_pvs_turn_changed_research_matches_minimax() {
     BoardTestAccess::set_piece(board, 7, 7, -6);
     BoardTestAccess::set_piece(board, 2, 2, 2);
     BoardTestAccess::set_piece(board, 4, 3, -2);
-    require_pvs_matches_minimax<NewEvaluator>(board, 1, "PVS turn-changed NewEvaluator");
+    require_pvs_matches_minimax<AggressiveEvaluator>(board, 1, "PVS turn-changed AggressiveEvaluator");
     require_pvs_matches_minimax<StandardEvaluator>(board, 1, "PVS turn-changed StandardEvaluator");
-    require_pvs_matches_minimax<SecondEvaluator>(board, 1, "PVS turn-changed SecondEvaluator");
+    require_pvs_matches_minimax<PositionalEvaluator>(board, 1, "PVS turn-changed PositionalEvaluator");
 }
 
 void test_pvs_same_turn_research_matches_minimax() {
@@ -2486,8 +2533,8 @@ void test_pvs_same_turn_research_matches_minimax() {
     BoardTestAccess::set_piece(board, 2, 2, 1);
     BoardTestAccess::set_piece(board, 4, 3, -1);
     require_pvs_matches_minimax<StandardEvaluator>(board, 2, "PVS same-turn StandardEvaluator");
-    require_pvs_matches_minimax<NewEvaluator>(board, 2, "PVS same-turn NewEvaluator");
-    require_pvs_matches_minimax<SecondEvaluator>(board, 2, "PVS same-turn SecondEvaluator");
+    require_pvs_matches_minimax<AggressiveEvaluator>(board, 2, "PVS same-turn AggressiveEvaluator");
+    require_pvs_matches_minimax<PositionalEvaluator>(board, 2, "PVS same-turn PositionalEvaluator");
 }
 
 void test_iterative_search_matches_exhaustive_final_depth() {
@@ -2817,10 +2864,10 @@ void test_horizon_quiescence_ignores_and_preserves_populated_tt() {
             "populated-TT horizon test changed its input position");
 }
 
-void test_default_depth_is_three() {
+void test_default_depth_is_four() {
     Engine engine(0);
-    require(engine.get_search_depth() == 3,
-            "default depth should be 3 after GUI-workload benchmarking");
+    require(engine.get_search_depth() == 4,
+            "default depth should be 4");
 }
 
 void test_equal_depth_result_replaces_cached_lower_bound() {
@@ -2871,6 +2918,7 @@ void test_colliding_children_cannot_corrupt_the_root_tt_move() {
 
 int main() {
     try {
+        test_move_comparisons_are_complements();
         test_pre_cancelled_search_does_no_work_or_tt_writes();
         test_main_search_cancellation_stops_before_node_publication_and_recovers();
         test_quiescence_cancellation_at_stand_pat_and_recursive_capture();
@@ -2942,7 +2990,7 @@ int main() {
         test_normal_search_uses_quiescence_after_a_quiet_horizon_move();
         test_quiescence_consumes_recursive_capture_budget();
         test_horizon_quiescence_ignores_and_preserves_populated_tt();
-        test_default_depth_is_three();
+        test_default_depth_is_four();
         test_equal_depth_result_replaces_cached_lower_bound();
         test_retained_lower_bound_keeps_its_move_witness();
         test_colliding_children_cannot_corrupt_the_root_tt_move();

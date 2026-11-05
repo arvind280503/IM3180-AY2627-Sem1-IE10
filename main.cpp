@@ -1,6 +1,7 @@
 #include "UI files/ui.hpp"
-#include "Engines/NewEvaluator.hpp"
-#include "Engines/SecondEvaluator.hpp"
+#include "Engines/AggressiveEvaluator.hpp"
+#include "Engines/PositionalEvaluator.hpp"
+#include "Engines/OldEvaluator.hpp"
 #include "storage/local_store.hpp"
 #include <iostream>
 
@@ -10,8 +11,9 @@ int main() {
         ChessUI ui(
             1,
             Engine::kDefaultSearchDepth,
-            std::make_unique<SecondEvaluator>(),
-            std::make_unique<NewEvaluator>()
+            std::make_unique<OldEvaluator>(),
+            std::make_unique<AggressiveEvaluator>()
+            
         );
         ui.setAuthHandler([&](const std::string& username, const std::string& password, bool sign_up) {
             return store.authenticate(username, password, sign_up);
@@ -19,7 +21,7 @@ int main() {
         ui.setMatchHistoryProvider([&](const std::string& username) {
             std::vector<ChessUI::MatchSummary> summaries;
             for (const auto& game : store.games(username))
-                summaries.push_back({game.white, game.black, game.result, game.date});
+                summaries.push_back({game.white, game.black, game.result, game.date, game.mainline});
             return summaries;
         });
         ui.setMatchRecorder([&](const std::string& username, int side,

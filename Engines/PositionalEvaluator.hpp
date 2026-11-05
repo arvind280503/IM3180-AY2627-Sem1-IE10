@@ -6,13 +6,14 @@
 #include <algorithm>
 #include <cmath>
 #include <utility>
+#include <typeinfo>
 
 class Board;
 
-class SecondEvaluator : public Evaluator {
+class PositionalEvaluator : public Evaluator {
 public:
     // Middlegame / endgame score pair. Nested so it can't clash with the
-    // TaperedScore declared in SecondEvaluator.hpp.
+    // TaperedScore declared in PositionalEvaluator.hpp.
     struct Tapered {
         int mg = 0;
         int eg = 0;
@@ -24,10 +25,15 @@ public:
         Tapered& operator-=(const Tapered& o) { mg -= o.mg; eg -= o.eg; return *this; }
     };
 
-    SecondEvaluator() = default;
-    ~SecondEvaluator() override = default;
+    PositionalEvaluator() = default;
+    ~PositionalEvaluator() override = default;
 
     int evaluate(const Board& board) const override;
+    std::unique_ptr<Evaluator> clone() const override {
+        if (typeid(*this) != typeid(PositionalEvaluator))
+            throw std::logic_error("PositionalEvaluator subclasses must override clone()");
+        return std::make_unique<PositionalEvaluator>(*this);
+    }
 
 private:
     // Static terms, White's point of view.
